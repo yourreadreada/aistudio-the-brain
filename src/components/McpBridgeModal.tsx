@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { brainStore } from '../services/brainStorage';
-import { ApexLogo } from './ApexLogo';
+import { BrainLogo } from './BrainLogo';
 
 interface McpBridgeModalProps {
   isOpen: boolean;
@@ -58,9 +58,9 @@ export const McpBridgeModal: React.FC<McpBridgeModalProps> = ({
       {/* Modal Dialog */}
       <div className="relative w-full max-w-[420px] rounded-2xl border border-white/20 bg-[#050713]/95 p-6 shadow-2xl backdrop-blur-2xl">
         <div className="flex items-center justify-between">
-          <div className="rise flex items-center gap-2.5 text-ink-faint">
-            <ApexLogo size={15} />
-            <span className="mono text-[13px]">APEX</span>
+          <div className="rise flex items-center gap-2.5 text-white">
+            <BrainLogo size={16} className="text-white" />
+            <span className="mono text-[13px] font-semibold text-white">THE BRAIN</span>
           </div>
           <button
             onClick={onClose}

@@ -1,7 +1,8 @@
-import { Fact, AISource, DEFAULT_BRAINS } from '../types/brain';
+import { Fact, AISource, DEFAULT_BRAINS, RecentActivityItem, ActivityAction } from '../types/brain';
 
 const STORAGE_KEY_FACTS = 'apex_brain_facts_v1';
 const STORAGE_KEY_BRAINS = 'apex_brain_list_v1';
+const STORAGE_KEY_ACTIVITIES = 'apex_brain_recent_activity_v1';
 
 // Seed initial memory facts based on user's real projects mentioned in conversation
 const SEED_FACTS: Fact[] = [
@@ -11,6 +12,7 @@ const SEED_FACTS: Fact[] = [
     brain: 'coding',
     source: 'claude',
     content: 'Dog translator project: Moved from heuristic regex audio rules to a real ML model. Preprocessing pipeline uses librosa for Mel-frequency cepstral coefficients (MFCCs) with PyTorch acoustic classifier.',
+    tags: ['audio-ml', 'pytorch', 'dsp'],
     created_at: '2026-10-02T14:22:00Z',
     updated_at: '2026-10-02T14:22:00Z',
   },
@@ -19,6 +21,7 @@ const SEED_FACTS: Fact[] = [
     brain: 'coding',
     source: 'gpt',
     content: 'Dog translator audio normalization: Target sampling rate is strictly 22050 Hz, mono channel, 3.5s sliding window to capture distinctive bark frequencies and whimpers.',
+    tags: ['audio-ml', 'preprocessing', 'audio'],
     created_at: '2026-10-03T09:15:00Z',
     updated_at: '2026-10-03T09:15:00Z',
   },
@@ -27,6 +30,7 @@ const SEED_FACTS: Fact[] = [
     brain: 'coding',
     source: 'cursor',
     content: 'Canteen system architecture: Built on FastAPI + React + Redis pub/sub for instant order status queue. Token collection counters refresh live without polling.',
+    tags: ['fastapi', 'redis', 'architecture'],
     created_at: '2026-10-03T16:40:00Z',
     updated_at: '2026-10-03T16:40:00Z',
   },
@@ -35,6 +39,7 @@ const SEED_FACTS: Fact[] = [
     brain: 'coding',
     source: 'github',
     content: 'Canteen system commit 4f9a2c: Swapped SQLite locks for Postgres connection pooling with PgBouncer. Peak load test sustained 850 concurrent lunch requests.',
+    tags: ['postgres', 'performance', 'database'],
     created_at: '2026-10-04T11:05:00Z',
     updated_at: '2026-10-04T11:05:00Z',
   },
@@ -43,6 +48,7 @@ const SEED_FACTS: Fact[] = [
     brain: 'coding',
     source: 'claude',
     content: 'Preferred coding style: Always TypeScript strict mode, functional components, zero unnecessary abstractions, prefer early returns, no arbitrary try/catch swallowing errors. Use Tailwind for UI without CSS files.',
+    tags: ['typescript', 'coding-style', 'frontend'],
     created_at: '2026-10-04T13:30:00Z',
     updated_at: '2026-10-04T13:30:00Z',
   },
@@ -51,6 +57,7 @@ const SEED_FACTS: Fact[] = [
     brain: 'coding',
     source: 'gemini',
     content: 'Idea-builder-system: Context window optimization strategy. Store summaries in local vector cache and feed only the last 3 turns + top 5 relevant memory cards to preserve tokens.',
+    tags: ['llm-context', 'vector-cache', 'optimization'],
     created_at: '2026-10-04T15:10:00Z',
     updated_at: '2026-10-04T15:10:00Z',
   },
@@ -59,6 +66,7 @@ const SEED_FACTS: Fact[] = [
     brain: 'coding',
     source: 'local-ai',
     content: 'Local Ollama setup: Qwen 2.5 Coder 14B runs at 38 t/s on local GPU; used for quick boilerplate generation without exposing internal project tokens.',
+    tags: ['ollama', 'local-llm', 'gpu'],
     created_at: '2026-10-04T17:45:00Z',
     updated_at: '2026-10-04T17:45:00Z',
   },
@@ -69,6 +77,7 @@ const SEED_FACTS: Fact[] = [
     brain: 'college',
     source: 'moodle',
     content: 'Moodle extension: Automated scraper for attendance portal and lab submission notices. Uses DOM mutation observers to inject quick download buttons beside PDF links.',
+    tags: ['moodle', 'scraping', 'extension'],
     created_at: '2026-10-01T08:00:00Z',
     updated_at: '2026-10-01T08:00:00Z',
   },
@@ -77,6 +86,7 @@ const SEED_FACTS: Fact[] = [
     brain: 'college',
     source: 'moodle',
     content: 'Computer Networks Assignment 3: Implementation of distance vector routing algorithm and Bellman-Ford count-to-infinity mitigation. Deadline Friday 11:59 PM.',
+    tags: ['networks', 'assignment', 'algorithms'],
     created_at: '2026-10-03T18:20:00Z',
     updated_at: '2026-10-03T18:20:00Z',
   },
@@ -85,6 +95,7 @@ const SEED_FACTS: Fact[] = [
     brain: 'college',
     source: 'claude',
     content: 'SIH (Smart India Hackathon) project: Edge AI system for offline agricultural disease detection on low-cost smartphones with quantized MobileNetV3.',
+    tags: ['sih', 'edge-ai', 'hackathon'],
     created_at: '2026-10-04T10:12:00Z',
     updated_at: '2026-10-04T10:12:00Z',
   },
@@ -93,6 +104,7 @@ const SEED_FACTS: Fact[] = [
     brain: 'college',
     source: 'gpt',
     content: 'Research paper literature review: Surveying retrieval-augmented generation architectures for cross-session developer memory retention.',
+    tags: ['rag', 'research', 'paper'],
     created_at: '2026-10-04T12:00:00Z',
     updated_at: '2026-10-04T12:00:00Z',
   },
@@ -119,6 +131,7 @@ const SEED_FACTS: Fact[] = [
 class BrainStorageService {
   private facts: Fact[] = [];
   private brains: string[] = [];
+  private activities: RecentActivityItem[] = [];
 
   constructor() {
     this.loadFromStorage();
@@ -141,9 +154,55 @@ class BrainStorageService {
         this.facts = [...SEED_FACTS];
         this.saveFacts();
       }
+
+      const storedActivities = localStorage.getItem(STORAGE_KEY_ACTIVITIES);
+      if (storedActivities) {
+        this.activities = JSON.parse(storedActivities);
+      } else {
+        this.activities = [
+          {
+            id: 'act-1',
+            factId: 1,
+            brain: 'coding',
+            source: 'claude',
+            snippet: 'Dog translator project: Moved from heuristic regex audio rules to a real ML model.',
+            action: 'modified',
+            timestamp: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
+          },
+          {
+            id: 'act-2',
+            factId: 3,
+            brain: 'coding',
+            source: 'cursor',
+            snippet: 'Canteen system architecture: Built on FastAPI + React + Redis pub/sub queue.',
+            action: 'created',
+            timestamp: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
+          },
+          {
+            id: 'act-3',
+            factId: 5,
+            brain: 'coding',
+            source: 'claude',
+            snippet: 'Preferred coding style: Always TypeScript strict mode, functional components, zero unnecessary abstractions.',
+            action: 'accessed',
+            timestamp: new Date(Date.now() - 1000 * 60 * 90).toISOString(),
+          },
+          {
+            id: 'act-4',
+            factId: 8,
+            brain: 'college',
+            source: 'moodle',
+            snippet: 'Moodle extension: Automated scraper for attendance portal and lab submission notices.',
+            action: 'created',
+            timestamp: new Date(Date.now() - 1000 * 60 * 180).toISOString(),
+          },
+        ];
+        this.saveActivities();
+      }
     } catch {
       this.brains = [...DEFAULT_BRAINS];
       this.facts = [...SEED_FACTS];
+      this.activities = [];
     }
   }
 
@@ -157,6 +216,90 @@ class BrainStorageService {
     try {
       localStorage.setItem(STORAGE_KEY_FACTS, JSON.stringify(this.facts));
     } catch {}
+  }
+
+  private saveActivities() {
+    try {
+      localStorage.setItem(STORAGE_KEY_ACTIVITIES, JSON.stringify(this.activities.slice(0, 50)));
+    } catch {}
+  }
+
+  public recordActivity(fact: Fact, action: ActivityAction) {
+    const item: RecentActivityItem = {
+      id: `act-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      factId: fact.id,
+      brain: fact.brain,
+      source: fact.source,
+      snippet: fact.content.length > 95 ? fact.content.substring(0, 95) + '…' : fact.content,
+      action,
+      timestamp: new Date().toISOString(),
+    };
+    this.activities = [item, ...this.activities.filter((a) => !(a.factId === fact.id && a.action === action))].slice(0, 40);
+    this.saveActivities();
+  }
+
+  public getRecentActivities(limit = 20): RecentActivityItem[] {
+    return this.activities.slice(0, limit);
+  }
+
+  public getFactById(id: number): Fact | undefined {
+    return this.facts.find((f) => f.id === id);
+  }
+
+  public globalSearch(query: string, preferredBrain?: string): Fact[] {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+
+    const isIdSearch = /^#?\d+$/.test(q);
+    if (isIdSearch) {
+      const numId = parseInt(q.replace('#', ''), 10);
+      return this.facts.filter((f) => f.id === numId);
+    }
+
+    const terms = q.split(/\s+/).filter(Boolean);
+
+    const scored = this.facts
+      .map((fact) => {
+        let score = 0;
+        const content = fact.content.toLowerCase();
+        const source = fact.source.toLowerCase();
+        const brain = fact.brain.toLowerCase();
+        const tagsText = (fact.tags || []).join(' ').toLowerCase();
+        const fullText = `${content} ${source} ${brain} ${tagsText} #${fact.id}`;
+
+        const allMatch = terms.every((t) => fullText.includes(t));
+        if (!allMatch) return { fact, score: 0 };
+
+        if (content.includes(q)) score += 10;
+        if (tagsText.includes(q)) score += 8;
+        if (source.includes(q)) score += 6;
+        if (preferredBrain && fact.brain === preferredBrain) score += 3;
+
+        score += 1;
+        return { fact, score };
+      })
+      .filter((item) => item.score > 0);
+
+    return scored.sort((a, b) => b.score - a.score).map((item) => item.fact);
+  }
+
+  public updateFactTags(id: number, tags: string[]): boolean {
+    const fact = this.facts.find((f) => f.id === id);
+    if (!fact) return false;
+    fact.tags = tags;
+    fact.updated_at = new Date().toISOString();
+    this.saveFacts();
+    this.recordActivity(fact, 'modified');
+    return true;
+  }
+
+  public getAllTags(brain?: string): string[] {
+    const list = brain ? this.facts.filter((f) => f.brain === brain) : this.facts;
+    const tagSet = new Set<string>();
+    list.forEach((f) => {
+      f.tags?.forEach((t) => tagSet.add(t));
+    });
+    return Array.from(tagSet).sort();
   }
 
   public getBrains(): string[] {
@@ -195,7 +338,8 @@ class BrainStorageService {
     if (query.trim()) {
       const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
       list = list.filter((fact) => {
-        const text = (fact.content + ' ' + fact.source).toLowerCase();
+        const tags = (fact.tags || []).join(' ');
+        const text = (fact.content + ' ' + fact.source + ' ' + tags + ' #' + fact.id).toLowerCase();
         return terms.every((term) => text.includes(term));
       });
     }
@@ -221,6 +365,7 @@ class BrainStorageService {
     this.facts.unshift(fact);
     this.createBrain(brain);
     this.saveFacts();
+    this.recordActivity(fact, 'created');
     return fact;
   }
 
@@ -232,6 +377,7 @@ class BrainStorageService {
     fact.content = newContent.trim();
     fact.updated_at = new Date().toISOString();
     this.saveFacts();
+    this.recordActivity(fact, 'modified');
     return true;
   }
 

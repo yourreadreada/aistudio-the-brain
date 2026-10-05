@@ -31,13 +31,29 @@ interface NodePoint {
   glow: number;
   d: number;
   phase: number;
+  rgb: [number, number, number];
 }
 
 interface LinkEdge {
   a: number;
   b: number;
   delay: number;
+  rgb: [number, number, number];
 }
+
+// Multi-source vibrant AI color palette
+const AI_PALETTE_RGB: [number, number, number][] = [
+  [216, 90, 48],   // Claude terracotta
+  [55, 138, 221],  // ChatGPT blue
+  [29, 158, 117],  // Gemini teal/emerald
+  [127, 119, 221], // GitHub violet
+  [212, 83, 126],  // Moodle berry pink
+  [61, 155, 184],  // Cursor cyan
+  [184, 146, 61],  // Local AI amber gold
+  [255, 122, 69],  // Anthropic warm orange
+  [74, 157, 236],  // OpenAI electric cyan
+  [40, 184, 139],  // Emerald light
+];
 
 function generateGraph(totalNodes: number) {
   let seed = 20942;
@@ -49,28 +65,32 @@ function generateGraph(totalNodes: number) {
   const nodes: NodePoint[] = [];
   const links: LinkEdge[] = [];
 
-  // Root node
+  // Root center node (White/Cyan core)
   nodes.push({
     x: 0,
     y: 0,
     fromX: 0,
     fromY: 0,
     delay: 0,
-    r: 2.6,
+    r: 2.8,
     glow: 1,
     d: 0,
     phase: 0,
+    rgb: [255, 255, 255],
   });
 
-  const branchCount = Math.max(5, Math.min(11, Math.round(Math.log2(totalNodes))));
+  const branchCount = Math.max(6, Math.min(10, Math.round(Math.log2(totalNodes))));
   const perBranch = Math.max(8, Math.floor((totalNodes - 1 - branchCount) / branchCount));
 
   for (let b = 0; b < branchCount; b++) {
-    const angle = (b / branchCount) * Math.PI * 2 + (random() - 0.5) * 0.5;
+    const angle = (b / branchCount) * Math.PI * 2 + (random() - 0.5) * 0.45;
     const dist = 0.24 + 0.14 * random();
     const nx = Math.cos(angle) * dist;
     const ny = Math.sin(angle) * dist;
     const branchRootIdx = nodes.length;
+
+    // Pick distinct colorful AI palette for this branch
+    const branchRgb = AI_PALETTE_RGB[b % AI_PALETTE_RGB.length];
 
     nodes.push({
       x: nx,
@@ -78,13 +98,14 @@ function generateGraph(totalNodes: number) {
       fromX: 2.4 * nx,
       fromY: 2.4 * ny,
       delay: 0.1 + 0.1 * random(),
-      r: 1.8,
-      glow: 0.9,
+      r: 2.0,
+      glow: 0.95,
       d: dist,
       phase: 6.283 * random(),
+      rgb: branchRgb,
     });
 
-    links.push({ a: 0, b: branchRootIdx, delay: 0.26 });
+    links.push({ a: 0, b: branchRootIdx, delay: 0.26, rgb: branchRgb });
 
     const subCount = 3 + Math.floor(3 * random());
     const subIndices: number[] = [];
@@ -97,19 +118,27 @@ function generateGraph(totalNodes: number) {
       const subIdx = nodes.length;
       subIndices.push(subIdx);
 
+      // Subtle hue shift along the sub-branch
+      const subRgb: [number, number, number] = [
+        Math.min(255, Math.max(0, branchRgb[0] + Math.round((random() - 0.5) * 30))),
+        Math.min(255, Math.max(0, branchRgb[1] + Math.round((random() - 0.5) * 30))),
+        Math.min(255, Math.max(0, branchRgb[2] + Math.round((random() - 0.5) * 30))),
+      ];
+
       nodes.push({
         x: sx,
         y: sy,
         fromX: Math.cos(subAngle) * (subDist + 1.4 + random()),
         fromY: Math.sin(subAngle) * (subDist + 1.4 + random()),
         delay: 0.2 + 0.7 * subDist + 0.15 * random(),
-        r: 1.25,
-        glow: 0.66,
+        r: 1.35,
+        glow: 0.75,
         d: subDist,
         phase: 6.283 * random(),
+        rgb: subRgb,
       });
 
-      links.push({ a: branchRootIdx, b: subIdx, delay: 0.34 + 0.6 * subDist });
+      links.push({ a: branchRootIdx, b: subIdx, delay: 0.34 + 0.6 * subDist, rgb: subRgb });
     }
 
     const extraCount = perBranch - subCount;
@@ -127,28 +156,35 @@ function generateGraph(totalNodes: number) {
       const totalD = Math.hypot(ux, uy);
       const childIdx = nodes.length;
 
+      const childRgb: [number, number, number] = [
+        Math.min(255, Math.max(0, branchRgb[0] + Math.round((random() - 0.5) * 45))),
+        Math.min(255, Math.max(0, branchRgb[1] + Math.round((random() - 0.5) * 45))),
+        Math.min(255, Math.max(0, branchRgb[2] + Math.round((random() - 0.5) * 45))),
+      ];
+
       nodes.push({
         x: ux,
         y: uy,
         fromX: ux * (1 + 1.6 / Math.max(totalD, 0.08)),
         fromY: uy * (1 + 1.6 / Math.max(totalD, 0.08)),
         delay: 0.24 + 0.8 * totalD + 0.2 * random(),
-        r: 0.65 + 0.85 * random(),
-        glow: 0.42 + 0.34 * random(),
+        r: 0.75 + 0.95 * random(),
+        glow: 0.5 + 0.4 * random(),
         d: totalD,
         phase: 6.283 * random(),
+        rgb: childRgb,
       });
 
-      links.push({ a: parentIdx, b: childIdx, delay: 0.4 + 0.7 * totalD });
-      if (random() < 0.2) {
+      links.push({ a: parentIdx, b: childIdx, delay: 0.4 + 0.7 * totalD, rgb: childRgb });
+      if (random() < 0.22) {
         const altIdx = subIndices[Math.floor(random() * subIndices.length)];
-        links.push({ a: childIdx, b: altIdx, delay: 0.6 + 0.7 * totalD });
+        links.push({ a: childIdx, b: altIdx, delay: 0.6 + 0.7 * totalD, rgb: childRgb });
       }
     }
   }
 
-  // Outer constellation satellites
-  const outerCount = Math.max(20, Math.floor(0.14 * nodes.length));
+  // Outer constellation satellites (colorful stars)
+  const outerCount = Math.max(24, Math.floor(0.15 * nodes.length));
   for (let o = 0; o < outerCount; o++) {
     const oAngle = 6.283 * random();
     const oDist = 0.02 + 0.3 * Math.pow(random(), 0.7);
@@ -156,16 +192,19 @@ function generateGraph(totalNodes: number) {
     const oy = Math.sin(oAngle) * oDist;
     const outIdx = nodes.length;
 
+    const satRgb = AI_PALETTE_RGB[Math.floor(random() * AI_PALETTE_RGB.length)];
+
     nodes.push({
       x: ox,
       y: oy,
       fromX: 6 * ox,
       fromY: 6 * oy,
       delay: 0.06 + 0.7 * oDist + 0.12 * random(),
-      r: 0.85 + 0.95 * random(),
-      glow: 0.72 + 0.28 * random(),
+      r: 0.85 + 1.1 * random(),
+      glow: 0.75 + 0.25 * random(),
       d: oDist,
       phase: 6.283 * random(),
+      rgb: satRgb,
     });
 
     let nearest = 0;
@@ -179,7 +218,9 @@ function generateGraph(totalNodes: number) {
         nearest = k;
       }
     }
-    links.push({ a: nearest, b: outIdx, delay: 0.2 + 0.7 * oDist });
+    if (minDist < 0.38) {
+      links.push({ a: nearest, b: outIdx, delay: 0.7 + 0.8 * minDist, rgb: satRgb });
+    }
   }
 
   return { nodes, links };
@@ -196,33 +237,49 @@ export const Constellation: React.FC<ConstellationProps> = ({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
-    const ctx = canvas.getContext('2d', { alpha: false });
+    const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let animId = 0;
     let width = 0;
     let height = 0;
-    let dpr = 1;
-
-    const targetNodeCount = window.innerWidth < 640 ? 450 : 1050;
-    const { nodes, links } = generateGraph(targetNodeCount);
-
     let mouseX = 99;
     let mouseY = 99;
-    let animId = 0;
-    const startTime = performance.now();
-    let enterStartTime = 0;
+    let startTime = performance.now();
+    let enterStartTime: number | null = null;
 
-    function handleResize() {
+    let graphData: { nodes: NodePoint[]; links: LinkEdge[] } = { nodes: [], links: [] };
+    let posX = new Float32Array(0);
+    let posY = new Float32Array(0);
+    let alphaArray = new Float32Array(0);
+    let radiusArray = new Float32Array(0);
+
+    function initGraph(w: number, h: number) {
+      const isLarge = w >= 1024;
+      const totalNodes = isLarge ? 580 : 360;
+      graphData = generateGraph(totalNodes);
+      posX = new Float32Array(graphData.nodes.length);
+      posY = new Float32Array(graphData.nodes.length);
+      alphaArray = new Float32Array(graphData.nodes.length);
+      radiusArray = new Float32Array(graphData.nodes.length);
+    }
+
+    function resize() {
       if (!canvas || !ctx) return;
-      dpr = Math.min(window.devicePixelRatio || 1, 2);
       width = canvas.clientWidth;
       height = canvas.clientHeight;
-      canvas.width = Math.max(1, Math.round(width * dpr));
-      canvas.height = Math.max(1, Math.round(height * dpr));
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (graphData.nodes.length === 0) {
+        initGraph(width, height);
+      }
     }
+
+    resize();
+    window.addEventListener('resize', resize);
 
     function handlePointerMove(e: PointerEvent) {
       if (!canvas || !interactive) return;
@@ -237,12 +294,10 @@ export const Constellation: React.FC<ConstellationProps> = ({
       mouseY = 99;
     }
 
-    handleResize();
-
-    const posX = new Float32Array(nodes.length);
-    const posY = new Float32Array(nodes.length);
-    const alphaArray = new Float32Array(nodes.length);
-    const radiusArray = new Float32Array(nodes.length);
+    if (interactive) {
+      window.addEventListener('pointermove', handlePointerMove);
+      window.addEventListener('pointerleave', handlePointerLeave);
+    }
 
     function render(now: number) {
       if (!ctx) return;
@@ -257,18 +312,18 @@ export const Constellation: React.FC<ConstellationProps> = ({
       const enterEase = enterProgress * enterProgress * (3 - 2 * enterProgress);
       const blurFactor = easeOutCubic(Math.max(0, (enterProgress - 0.3) / 0.7));
 
-      // Background color interpolation
+      // Deep void black base
       if (enterEase > 0) {
-        const rVal = Math.round(5 - 2 * enterEase);
-        const gVal = Math.round(5 - enterEase);
-        const bVal = Math.round(5 + 5 * enterEase);
+        const rVal = Math.round(3 + 12 * enterEase);
+        const gVal = Math.round(4 + 14 * enterEase);
+        const bVal = Math.round(10 + 26 * enterEase);
         ctx.fillStyle = `rgb(${rVal},${gVal},${bVal})`;
       } else {
         ctx.fillStyle = '#03040a';
       }
       ctx.fillRect(0, 0, width, height);
 
-      const isDesktop = width >= 1024 ? 1 : 0.55;
+      const isDesktop = width >= 1024 ? 1 : 0.65;
       const dims = getDimensions(width, height);
       const centerX = dims.cx + (width / 2 - dims.cx) * enterEase;
       const centerY = dims.cy;
@@ -280,11 +335,14 @@ export const Constellation: React.FC<ConstellationProps> = ({
         ? 0.62 * elapsed
         : ((elapsed - 2.6) % 7) * 0.34;
 
-      const rot = prefersReducedMotion ? 0 : 0.016 * elapsed;
+      const rot = prefersReducedMotion ? 0 : 0.018 * elapsed;
       const offsetX = mouseX < 9 ? 0.045 * mouseX : 0;
       const offsetY = mouseY < 9 ? 0.045 * mouseY : 0;
       const cosR = Math.cos(rot);
       const sinR = Math.sin(rot);
+
+      const nodes = graphData.nodes;
+      const links = graphData.links;
 
       // Compute node positions
       for (let i = 0; i < nodes.length; i++) {
@@ -298,7 +356,7 @@ export const Constellation: React.FC<ConstellationProps> = ({
         let curY = node.fromY + (node.y - node.fromY) * appearEase;
 
         if (!prefersReducedMotion && appear >= 1) {
-          const breath = 0.008 * Math.sin(0.55 * elapsed + node.phase);
+          const breath = 0.01 * Math.sin(0.55 * elapsed + node.phase);
           curX += curX * breath;
           curY += curY * breath;
         }
@@ -319,7 +377,7 @@ export const Constellation: React.FC<ConstellationProps> = ({
         alphaArray[i] =
           Math.min(
             1,
-            (0.86 * node.glow + 0.4 * waveDist + 0.6 * mouseProx + typingGlow) * appear
+            (0.88 * node.glow + 0.45 * waveDist + 0.65 * mouseProx + typingGlow) * appear
           ) *
           (1 - 0.92 * blurFactor);
 
@@ -330,64 +388,72 @@ export const Constellation: React.FC<ConstellationProps> = ({
           (1 - 0.62 * enterEase);
       }
 
-      // Draw links in 3 layers of intensity
-      for (let tier = 0; tier < 3; tier++) {
-        ctx.beginPath();
-        let hasPoints = false;
-        for (let l = 0; l < links.length; l++) {
-          const link = links[l];
-          const linkAppear = prefersReducedMotion
-            ? 1
-            : Math.max(0, Math.min(1, (elapsed - link.delay) / 0.9));
-          if (linkAppear <= 0) continue;
+      // Draw links in colorful tiers
+      for (let l = 0; l < links.length; l++) {
+        const link = links[l];
+        const linkAppear = prefersReducedMotion
+          ? 1
+          : Math.max(0, Math.min(1, (elapsed - link.delay) / 0.9));
+        if (linkAppear <= 0) continue;
 
-          const avgAlpha = (alphaArray[link.a] + alphaArray[link.b]) * 0.5;
-          if (Math.floor(3 * avgAlpha) === tier) {
-            hasPoints = true;
-            ctx.moveTo(posX[link.a], posY[link.a]);
-            ctx.lineTo(posX[link.b], posY[link.b]);
-          }
-        }
-        if (hasPoints) {
-          ctx.strokeStyle = `rgba(255, 255, 255, ${
-            (0.028 + 0.045 * tier) * isDesktop * Math.pow(1 - blurFactor, 1.6)
-          })`;
-          ctx.lineWidth = tier === 2 ? 0.8 : 0.6;
-          ctx.stroke();
-        }
+        const avgAlpha = (alphaArray[link.a] + alphaArray[link.b]) * 0.5;
+        if (avgAlpha < 0.03) continue;
+
+        const [r, g, b] = link.rgb;
+        const strokeOpacity =
+          (0.045 + 0.14 * avgAlpha) * isDesktop * Math.pow(1 - blurFactor, 1.6);
+
+        ctx.beginPath();
+        ctx.moveTo(posX[link.a], posY[link.a]);
+        ctx.lineTo(posX[link.b], posY[link.b]);
+        ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${strokeOpacity})`;
+        ctx.lineWidth = 0.7;
+        ctx.stroke();
       }
 
-      // Draw nodes
+      // Draw vibrant colorful nodes
       for (let i = 0; i < nodes.length; i++) {
         if (alphaArray[i] <= 0.01) continue;
+        const node = nodes[i];
+        const [r, g, b] = node.rgb;
+        const nodeR = Math.max(0.4, radiusArray[i]);
+        const alpha = Math.min(0.98, 0.94 * alphaArray[i] * isDesktop);
+
+        // Luminous soft halo on larger nodes
+        if (nodeR > 1.4) {
+          ctx.beginPath();
+          ctx.arc(posX[i], posY[i], nodeR + 3.5, 0, 6.2832);
+          ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha * 0.28})`;
+          ctx.fill();
+        }
+
+        // Solid colorful core
         ctx.beginPath();
-        ctx.arc(posX[i], posY[i], Math.max(0.35, radiusArray[i]), 0, 6.2832);
-        ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(
-          0.96,
-          0.92 * alphaArray[i] * isDesktop
-        )})`;
+        ctx.arc(posX[i], posY[i], nodeR, 0, 6.2832);
+        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
         ctx.fill();
       }
 
-      // Central luminescent radial haze
+      // Multi-spectral chromatic central haze
       const hazeFactor =
         Math.min(1, Math.max(0, elapsed - 0.1)) *
-        (currentMood === 'typing' ? 1 : 0.7) *
+        (currentMood === 'typing' ? 1 : 0.75) *
         (1 - blurFactor);
       if (hazeFactor > 0.02) {
+        const glowRadius = 0.42 * radius + enterEase * dims.radius * 0.1;
         const glowGrad = ctx.createRadialGradient(
           centerX,
           centerY,
           0,
           centerX,
           centerY,
-          0.38 * radius + enterEase * dims.radius * 0.1
+          glowRadius
         );
-        glowGrad.addColorStop(
-          0,
-          `rgba(255, 255, 255, ${Math.min(0.3, 0.055 * hazeFactor)})`
-        );
-        glowGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        glowGrad.addColorStop(0, `rgba(255, 255, 255, ${0.08 * hazeFactor})`);
+        glowGrad.addColorStop(0.3, `rgba(157, 180, 255, ${0.06 * hazeFactor})`);
+        glowGrad.addColorStop(0.65, `rgba(216, 90, 48, ${0.03 * hazeFactor})`);
+        glowGrad.addColorStop(1, 'rgba(3, 4, 10, 0)');
+
         ctx.fillStyle = glowGrad;
         ctx.fillRect(0, 0, width, height);
       }
@@ -398,11 +464,9 @@ export const Constellation: React.FC<ConstellationProps> = ({
         const burstRadius = Math.max(width, height) * 0.95 * (0.12 + 0.88 * enterEase);
         const burstGrad = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, burstRadius);
         burstGrad.addColorStop(0, `rgba(255, 255, 255, ${0.92 * burstT})`);
-        burstGrad.addColorStop(0.15, `rgba(255, 255, 255, ${0.86 * burstT})`);
-        burstGrad.addColorStop(0.27, `rgba(223, 249, 255, ${0.3 * burstT})`);
-        burstGrad.addColorStop(0.48, `rgba(157, 180, 255, ${0.1 * burstT})`);
-        burstGrad.addColorStop(0.72, `rgba(157, 180, 255, ${0.03 * burstT})`);
-        burstGrad.addColorStop(1, 'rgba(157, 180, 255, 0)');
+        burstGrad.addColorStop(0.3, `rgba(157, 180, 255, ${0.65 * burstT})`);
+        burstGrad.addColorStop(0.7, `rgba(127, 119, 221, ${0.35 * burstT})`);
+        burstGrad.addColorStop(1, 'rgba(3, 4, 10, 0)');
         ctx.fillStyle = burstGrad;
         ctx.fillRect(0, 0, width, height);
       }
@@ -412,15 +476,9 @@ export const Constellation: React.FC<ConstellationProps> = ({
 
     animId = requestAnimationFrame(render);
 
-    window.addEventListener('resize', handleResize);
-    if (interactive) {
-      window.addEventListener('pointermove', handlePointerMove);
-      window.addEventListener('pointerleave', handlePointerLeave);
-    }
-
     return () => {
       cancelAnimationFrame(animId);
-      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('resize', resize);
       if (interactive) {
         window.removeEventListener('pointermove', handlePointerMove);
         window.removeEventListener('pointerleave', handlePointerLeave);

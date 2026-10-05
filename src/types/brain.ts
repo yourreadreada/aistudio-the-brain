@@ -12,6 +12,7 @@ export interface Fact {
   brain: string;
   content: string;
   source: AISource;
+  tags?: string[];
   created_at: string;
   updated_at: string;
 }
@@ -85,3 +86,15 @@ export const SOURCE_PALETTE: Record<AISource, SourceMeta> = {
 };
 
 export const DEFAULT_BRAINS = ['coding', 'college', 'personal'];
+
+export type ActivityAction = 'accessed' | 'modified' | 'created';
+
+export interface RecentActivityItem {
+  id: string; // unique event id
+  factId: number;
+  brain: string;
+  source: AISource;
+  snippet: string;
+  action: ActivityAction;
+  timestamp: string;
+}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Fact, AISource, SOURCE_PALETTE } from '../types/brain';
+import { Fact, AISource, SOURCE_PALETTE, RecentActivityItem } from '../types/brain';
 import { brainStore } from '../services/brainStorage';
 import { BrainAppHeader } from './BrainAppHeader';
 import { BrainViewerCanvas } from './BrainViewerCanvas';
@@ -7,20 +7,40 @@ import { FactPanel } from './FactPanel';
 import { AddFactModal } from './AddFactModal';
 import { IngestModal } from './IngestModal';
 import { McpBridgeModal } from './McpBridgeModal';
+import { RecentActivityPanel } from './RecentActivityPanel';
 
 interface BrainViewProps {
   userEmail: string;
+  initialBrainName?: string;
   onSwitchToLogin: () => void;
 }
 
-export const BrainView: React.FC<BrainViewProps> = ({ onSwitchToLogin }) => {
-  const [currentBrain, setCurrentBrain] = useState('coding');
+export const BrainView: React.FC<BrainViewProps> = ({ userEmail, initialBrainName, onSwitchToLogin }) => {
+  const [currentBrain, setCurrentBrain] = useState(initialBrainName || 'coding');
+
+  useEffect(() => {
+    if (initialBrainName) {
+      setCurrentBrain(initialBrainName);
+    }
+  }, [initialBrainName]);
   const [brains, setBrains] = useState<string[]>([]);
   const [facts, setFacts] = useState<Fact[]>([]);
   const [selectedFact, setSelectedFact] = useState<Fact | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSourceFilter, setActiveSourceFilter] = useState<AISource | null>(null);
   const [viewMode, setViewMode] = useState<'graph' | 'list'>('graph');
+
+  // Recent Activity State
+  const [isRecentActivityOpen, setIsRecentActivityOpen] = useState(false);
+  const [activities, setActivities] = useState<RecentActivityItem[]>([]);
+
+  const refreshActivities = () => {
+    setActivities(brainStore.getRecentActivities());
+  };
+
+  useEffect(() => {
+    refreshActivities();
+  }, []);
 
   // Compute dynamic scale and intensity for background atmospheric glow container
   const glowMetrics = useMemo(() => {
@@ -92,20 +112,32 @@ export const BrainView: React.FC<BrainViewProps> = ({ onSwitchToLogin }) => {
       setCurrentBrain(brain);
     }
     refreshData();
+    refreshActivities();
     setSelectedFact(newFact);
   };
 
   const handleSaveCorrection = (id: number, newContent: string) => {
     brainStore.correct(id, newContent);
     refreshData();
+    refreshActivities();
     if (selectedFact && selectedFact.id === id) {
       setSelectedFact({ ...selectedFact, content: newContent, updated_at: new Date().toISOString() });
+    }
+  };
+
+  const handleUpdateFactTags = (id: number, tags: string[]) => {
+    brainStore.updateFactTags(id, tags);
+    refreshData();
+    refreshActivities();
+    if (selectedFact && selectedFact.id === id) {
+      setSelectedFact({ ...selectedFact, tags, updated_at: new Date().toISOString() });
     }
   };
 
   const handleDeleteFact = (id: number) => {
     brainStore.forget(id);
     refreshData();
+    refreshActivities();
     if (selectedFact && selectedFact.id === id) {
       setSelectedFact(null);
     }
@@ -117,7 +149,45 @@ export const BrainView: React.FC<BrainViewProps> = ({ onSwitchToLogin }) => {
       setCurrentBrain(brain);
     }
     refreshData();
+    refreshActivities();
     return count;
+  };
+
+  const handleSelectFactFromSearch = (fact: Fact, targetBrain?: string) => {
+    if (targetBrain && targetBrain !== currentBrain) {
+      setCurrentBrain(targetBrain);
+    }
+    setSelectedFact(fact);
+    brainStore.recordActivity(fact, 'accessed');
+    refreshActivities();
+  };
+
+  const handleSelectActivity = (item: RecentActivityItem) => {
+    const fact = brainStore.getFactById(item.factId);
+    if (fact) {
+      if (fact.brain !== currentBrain) {
+        setCurrentBrain(fact.brain);
+      }
+      setSelectedFact(fact);
+      brainStore.recordActivity(fact, 'accessed');
+      refreshActivities();
+      setIsRecentActivityOpen(false);
+    }
+  };
+
+  const handleClearActivities = () => {
+    try {
+      localStorage.removeItem('apex_brain_recent_activity_v1');
+    } catch {}
+    setActivities([]);
+  };
+
+  const handleFactSelected = (fact: Fact | null) => {
+    setSelectedFact(fact);
+    if (fact) {
+      brainStore.recordActivity(fact, 'accessed');
+      refreshActivities();
+    }
   };
 
   return (
@@ -130,12 +200,16 @@ export const BrainView: React.FC<BrainViewProps> = ({ onSwitchToLogin }) => {
         onCreateBrain={handleCreateBrain}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
+        onSelectFactFromSearch={handleSelectFactFromSearch}
         activeSourceFilter={activeSourceFilter}
         onSelectSourceFilter={setActiveSourceFilter}
         onOpenAddFact={() => setIsAddFactOpen(true)}
         onOpenIngest={() => setIsIngestOpen(true)}
         onOpenMcp={() => setIsMcpOpen(true)}
         onSwitchToLogin={onSwitchToLogin}
+        onToggleRecentActivity={() => setIsRecentActivityOpen(!isRecentActivityOpen)}
+        recentActivityCount={activities.length}
+        isRecentActivityOpen={isRecentActivityOpen}
       />
 
       {/* Main View Area */}
@@ -174,7 +248,7 @@ export const BrainView: React.FC<BrainViewProps> = ({ onSwitchToLogin }) => {
             brainName={currentBrain}
             facts={facts}
             selectedFactId={selectedFact?.id || null}
-            onSelectFact={setSelectedFact}
+            onSelectFact={handleFactSelected}
             searchQuery={searchQuery}
             activeSourceFilter={activeSourceFilter}
           />
@@ -207,7 +281,7 @@ export const BrainView: React.FC<BrainViewProps> = ({ onSwitchToLogin }) => {
                   return (
                     <div
                       key={fact.id}
-                      onClick={() => setSelectedFact(fact)}
+                      onClick={() => handleFactSelected(fact)}
                       className="cursor-pointer rounded-xl border border-white/10 bg-white/[0.02] p-4 transition hover:border-white/25 hover:bg-white/[0.05]"
                     >
                       <div className="flex items-center justify-between">
@@ -299,6 +373,16 @@ export const BrainView: React.FC<BrainViewProps> = ({ onSwitchToLogin }) => {
           onClose={() => setSelectedFact(null)}
           onSaveCorrection={handleSaveCorrection}
           onDeleteFact={handleDeleteFact}
+          onUpdateTags={handleUpdateFactTags}
+        />
+
+        {/* Slide-over Recent Activity Panel */}
+        <RecentActivityPanel
+          isOpen={isRecentActivityOpen}
+          onClose={() => setIsRecentActivityOpen(false)}
+          activities={activities}
+          onSelectActivity={handleSelectActivity}
+          onClearActivities={handleClearActivities}
         />
       </div>
 
