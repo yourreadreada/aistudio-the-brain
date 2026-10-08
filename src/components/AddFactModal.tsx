@@ -1,13 +1,26 @@
-import React, { useState } from 'react';
-import { AISource, SOURCE_PALETTE } from '../types/brain';
+import React, { useState, useRef } from 'react';
+import {
+  AISource,
+  FactFileType,
+  SOURCE_PALETTE,
+  FILE_TYPE_CONFIG,
+  inferFileTypeFromExtension,
+} from '../types/brain';
 import { BrainLogo } from './BrainLogo';
+import { extractTextFromFile, SUPPORTED_FILE_EXTENSIONS } from '../services/fileExtractor';
 
 interface AddFactModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentBrain: string;
   brains: string[];
-  onAddFact: (brain: string, content: string, source: AISource) => void;
+  onAddFact: (
+    brain: string,
+    content: string,
+    source: AISource,
+    fileName?: string,
+    fileType?: FactFileType
+  ) => void;
 }
 
 export const AddFactModal: React.FC<AddFactModalProps> = ({
@@ -22,8 +35,32 @@ export const AddFactModal: React.FC<AddFactModalProps> = ({
   const [content, setContent] = useState('');
   const [customBrain, setCustomBrain] = useState('');
   const [isCreatingBrain, setIsCreatingBrain] = useState(false);
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [attachedFileName, setAttachedFileName] = useState<string | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   if (!isOpen) return null;
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsExtracting(true);
+    setAttachedFileName(file.name);
+
+    try {
+      const result = await extractTextFromFile(file);
+      if (result.text) {
+        setContent(result.text.slice(0, 4000)); // take up to 4000 chars for a single fact
+        setSource(result.detectedSource);
+      }
+    } catch {
+      // ignore fallback
+    } finally {
+      setIsExtracting(false);
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,8 +70,19 @@ export const AddFactModal: React.FC<AddFactModalProps> = ({
       ? customBrain.trim().toLowerCase() || currentBrain
       : targetBrain;
 
-    onAddFact(chosenBrain, content.trim(), source);
+    const detectedFileType = attachedFileName
+      ? inferFileTypeFromExtension(attachedFileName)
+      : undefined;
+
+    onAddFact(
+      chosenBrain,
+      content.trim(),
+      source,
+      attachedFileName || undefined,
+      detectedFileType
+    );
     setContent('');
+    setAttachedFileName(null);
     setIsCreatingBrain(false);
     onClose();
   };
@@ -48,7 +96,7 @@ export const AddFactModal: React.FC<AddFactModalProps> = ({
       />
 
       {/* Modal Dialog */}
-      <div className="relative w-full max-w-[340px] rounded-2xl border border-white/20 bg-[#050713]/95 p-6 shadow-2xl backdrop-blur-2xl">
+      <div className="relative w-full max-w-[380px] rounded-2xl border border-white/20 bg-[#050713]/95 p-6 shadow-2xl backdrop-blur-2xl">
         <div className="flex items-center justify-between">
           <div className="rise flex items-center gap-2.5 text-white">
             <BrainLogo size={16} className="text-white" />
@@ -124,15 +172,50 @@ export const AddFactModal: React.FC<AddFactModalProps> = ({
             </select>
           </div>
 
-          {/* Fact Content */}
+          {/* Fact Content with File Attachment */}
           <div>
-            <span className="mono block text-[11px] text-ink-ghost mb-1">
-              Content
-            </span>
+            <div className="flex items-center justify-between mb-1">
+              <span className="mono text-[11px] text-ink-ghost">
+                Content
+              </span>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="mono text-[11px] text-indigo-300 hover:text-indigo-200 flex items-center gap-1"
+              >
+                <span>📎 Attach file (PDF/DOCX/XLSX/PPTX)</span>
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={SUPPORTED_FILE_EXTENSIONS.join(',')}
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+            </div>
+
+            {attachedFileName && (
+              <div className="mb-2 flex items-center justify-between rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1 text-[11px] text-indigo-200">
+                <span className="truncate">
+                  {isExtracting ? '⏳ Extracting text from ' : '✓ Extracted from '} {attachedFileName}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAttachedFileName(null);
+                    setContent('');
+                  }}
+                  className="ml-2 text-white/50 hover:text-white"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
             <textarea
               required
               rows={4}
-              placeholder="e.g. Dog translator uses PyTorch MFCC audio pipeline at 22050Hz."
+              placeholder="e.g. Dog translator uses PyTorch MFCC audio pipeline at 22050Hz, or attach a file above..."
               value={content}
               onChange={(e) => setContent(e.target.value)}
               className="w-full rounded-xl border border-white/36 bg-black/30 p-3.5 text-[14px] text-ink outline-none backdrop-blur-md transition placeholder:text-ink-ghost focus:border-white/52 focus:bg-black/45"
@@ -141,10 +224,10 @@ export const AddFactModal: React.FC<AddFactModalProps> = ({
 
           <button
             type="submit"
-            disabled={!content.trim()}
+            disabled={!content.trim() || isExtracting}
             className="mono min-h-11 w-full rounded-xl bg-white/90 py-3 text-[12px] font-medium text-black transition hover:bg-white disabled:opacity-50 pointer-fine:min-h-0 pointer-fine:py-3 mt-2"
           >
-            Store fact
+            {isExtracting ? 'Extracting File...' : 'Store fact'}
           </button>
         </form>
       </div>

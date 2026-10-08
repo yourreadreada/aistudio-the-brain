@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>brain</title>
+<style>
+  :root {
+    --bg: #0b0c10; --panel: #15171d; --border: #2a2d36;
+    --text: #e8e8ea; --muted: #8b8d96; --accent: #ffffff;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f7f7f8; --panel: #ffffff; --border: #ddd; --text: #15171d; --muted: #6a6c75; --accent: #000; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, system-ui, sans-serif; overflow: hidden; }
+  header { position: fixed; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 12px; padding: 12px 16px; z-index: 5; }
+  header h1 { font-size: 14px; font-weight: 600; margin: 0; letter-spacing: 0.02em; }
+  select { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font-size: 13px; }
+  #legend { position: fixed; bottom: 12px; left: 16px; display: flex; flex-wrap: wrap; gap: 10px; z-index: 5; }
+  .legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  svg { position: fixed; inset: 0; width: 100%; height: 100%; cursor: default; }
+  svg circle.node { cursor: pointer; }
+  #panel {
+    position: fixed; top: 0; right: 0; bottom: 0; width: 340px; max-width: 90vw;
+    background: var(--panel); border-left: 1px solid var(--border);
+    transform: translateX(100%); transition: transform 180ms ease; z-index: 10;
+    padding: 20px; display: flex; flex-direction: column; gap: 10px;
+  }
+  #panel.open { transform: translateX(0); }
+  #panel .meta { font-size: 11px; color: var(--muted); }
+  #panel textarea {
+    flex: 1; min-height: 160px; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-size: 13px; resize: vertical;
+  }
+  #panel .row { display: flex; gap: 8px; }
+  #panel button {
+    flex: 1; padding: 9px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); font-size: 12px; cursor: pointer;
+  }
+  #panel button.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  #panel button.danger { color: #c0392b; }
+  #closeBtn { background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer; align-self: flex-end; }
+  #empty { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 13px; text-align: center; padding: 0 40px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>brain</h1>
+  <select id="brainSelect"></select>
+</header>
+<svg id="svg"></svg>
+<div id="legend"></div>
+<div id="empty" style="display:none">No facts in this brain yet. Run the ingest script, or call remember() from an MCP client.</div>
+
+<div id="panel">
+  <button id="closeBtn" aria-label="Close">×</button>
+  <div class="meta" id="panelMeta"></div>
+  <textarea id="panelContent"></textarea>
+  <div class="row">
+    <button class="primary" id="saveBtn">Save correction</button>
+  </div>
+  <div class="row">
+    <button class="danger" id="deleteBtn">Delete fact</button>
+  </div>
+</div>
+
+<script>
+(function(){
+var PALETTE = ["#D85A30","#378ADD","#1D9E75","#7F77DD","#D4537E","#B8923D","#3D9BB8"];
+var svg = document.getElementById("svg");
+var brainSelect = document.getElementById("brainSelect");
+var legend = document.getElementById("legend");
+var emptyEl = document.getElementById("empty");
+var panel = document.getElementById("panel");
+var panelMeta = document.getElementById("panelMeta");
+var panelContent = document.getElementById("panelContent");
+var currentFactId = null;
+var nodes = [], lines = [];
+
+function sourceColor(source, sourceOrder){
+  var i = sourceOrder.indexOf(source);
+  return PALETTE[i % PALETTE.length];
+}
+
+function layout(facts){
+  var W = window.innerWidth, H = window.innerHeight;
+  var CX = W/2, CY = H/2;
+  var sources = [];
+  facts.forEach(function(f){ if (sources.indexOf(f.source) === -1) sources.push(f.source); });
+
+  nodes = []; lines = [];
+  var centerIdx = 0;
+  nodes.push({baseX:CX, baseY:CY, x:CX, y:CY, r:7, fill:"var(--accent)", cssFill:true, static:true, fact:null});
+
+  var clusterRadius = Math.min(W,H) * 0.32;
+  var hubIdxBySource = {};
+  sources.forEach(function(src, i){
+    var ang = (i / sources.length) * Math.PI * 2 - Math.PI/2;
+    var hx = CX + Math.cos(ang)*clusterRadius, hy = CY + Math.sin(ang)*clusterRadius;
+    var hubIdx = nodes.length;
+    hubIdxBySource[src] = hubIdx;
+    nodes.push({baseX:hx, baseY:hy, x:hx, y:hy, r:5, fill:sourceColor(src, sources), static:true, fact:null});
+    lines.push({a:centerIdx, b:hubIdx, op:0.3});
+  });
+
+  facts.forEach(function(f){
+    var hubIdx = hubIdxBySource[f.source];
+    var hub = nodes[hubIdx];
+    var ang = Math.random()*Math.PI*2, dist = 18 + Math.random()*55;
+    var bx = hub.baseX + Math.cos(ang)*dist, by = hub.baseY + Math.sin(ang)*dist;
+    var idx = nodes.length;
+    nodes.push({
+      baseX:bx, baseY:by, x:bx, y:by, r:3.2, fill:sourceColor(f.source, sources), static:false,
+      amp:1+Math.random()*2, phase:Math.random()*6.283, phase2:Math.random()*6.283,
+      speed:0.0003+Math.random()*0.0005, twspeed:0.0008+Math.random()*0.0018,
+      fact:f
+    });
+    lines.push({a:hubIdx, b:idx, op:0.2+Math.random()*0.2});
+  });
+
+  legend.innerHTML = sources.map(function(s){
+    return '<span class="legend-item"><span class="legend-dot" style="background:'+sourceColor(s,sources)+'"></span>'+s+'</span>';
+  }).join("");
+}
+
+function render(){
+  var html = [];
+  lines.forEach(function(ln, i){
+    var strokeColor = nodes[ln.a].cssFill ? "var(--muted)" : nodes[ln.a].fill;
+    html.push('<line id="l'+i+'" x1="0" y1="0" x2="0" y2="0" style="stroke:'+strokeColor+'" stroke-width="0.6" opacity="'+ln.op.toFixed(2)+'"/>');
+  });
+  nodes.forEach(function(nd, i){
+    var cls = nd.fact ? "node" : "";
+    var fill = nd.cssFill ? "var(--accent)" : nd.fill;
+    html.push('<circle id="n'+i+'" class="'+cls+'" data-i="'+i+'" cx="'+nd.baseX.toFixed(1)+'" cy="'+nd.baseY.toFixed(1)+'" r="'+nd.r+'" style="fill:'+fill+'" opacity="0.85"/>');
+  });
+  svg.innerHTML = html.join("");
+  nodes.forEach(function(nd, i){ nd.el = document.getElementById("n"+i); });
+  lines.forEach(function(ln, i){ ln.el = document.getElementById("l"+i); });
+}
+
+function tick(){
+  var t = performance.now();
+  nodes.forEach(function(nd){
+    if (nd.static) return;
+    nd.x = nd.baseX + nd.amp*Math.cos(t*nd.speed+nd.phase);
+    nd.y = nd.baseY + nd.amp*Math.sin(t*nd.speed*1.3+nd.phase);
+    var op = 0.55 + 0.3*Math.sin(t*nd.twspeed+nd.phase2);
+    nd.el.setAttribute("cx", nd.x.toFixed(1));
+    nd.el.setAttribute("cy", nd.y.toFixed(1));
+    nd.el.setAttribute("opacity", op.toFixed(2));
+  });
+  lines.forEach(function(ln){
+    var a = nodes[ln.a], b = nodes[ln.b];
+    ln.el.setAttribute("x1", a.x.toFixed(1)); ln.el.setAttribute("y1", a.y.toFixed(1));
+    ln.el.setAttribute("x2", b.x.toFixed(1)); ln.el.setAttribute("y2", b.y.toFixed(1));
+  });
+}
+
+var reduceMotion = window.matchMedia && !window.matchMedia("(prefers-reduced-motion: no-preference)").matches;
+var ticking = null;
+function startTicking(){
+  if (ticking) clearInterval(ticking);
+  render();
+  tick();
+  if (!reduceMotion) ticking = setInterval(tick, 60);
+}
+
+svg.addEventListener("click", function(e){
+  var i = e.target.getAttribute && e.target.getAttribute("data-i");
+  if (i === null || i === undefined) return;
+  var nd = nodes[parseInt(i,10)];
+  if (!nd.fact) return;
+  openPanel(nd.fact);
+});
+
+function openPanel(fact){
+  currentFactId = fact.id;
+  panelMeta.textContent = "#" + fact.id + " · " + fact.source + " · updated " + fact.updated_at;
+  panelContent.value = fact.content;
+  panel.classList.add("open");
+}
+function closePanel(){ panel.classList.remove("open"); currentFactId = null; }
+document.getElementById("closeBtn").onclick = closePanel;
+
+document.getElementById("saveBtn").onclick = function(){
+  if (currentFactId === null) return;
+  fetch("/api/correct", {
+    method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({id: currentFactId, content: panelContent.value})
+  }).then(function(){ closePanel(); loadFacts(brainSelect.value); });
+};
+document.getElementById("deleteBtn").onclick = function(){
+  if (currentFactId === null) return;
+  fetch("/api/forget", {
+    method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({id: currentFactId})
+  }).then(function(){ closePanel(); loadFacts(brainSelect.value); });
+};
+
+function loadFacts(brain){
+  fetch("/api/facts?brain=" + encodeURIComponent(brain))
+    .then(function(r){ return r.json(); })
+    .then(function(facts){
+      emptyEl.style.display = facts.length ? "none" : "flex";
+      layout(facts);
+      startTicking();
+    });
+}
+
+fetch("/api/brains").then(function(r){ return r.json(); }).then(function(brains){
+  if (!brains.length){ emptyEl.style.display = "flex"; return; }
+  brainSelect.innerHTML = brains.map(function(b){ return '<option value="'+b+'">'+b+'</option>'; }).join("");
+  brainSelect.onchange = function(){ loadFacts(brainSelect.value); };
+  loadFacts(brains[0]);
+});
+
+window.addEventListener("resize", function(){ if (brainSelect.value) loadFacts(brainSelect.value); });
+})();
+</script>
+</body>
+</html>

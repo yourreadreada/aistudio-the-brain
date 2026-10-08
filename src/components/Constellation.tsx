@@ -329,11 +329,8 @@ export const Constellation: React.FC<ConstellationProps> = ({
       const centerY = dims.cy;
       const radius = dims.radius * (1 - 0.938 * enterEase);
 
-      const pulseWave = prefersReducedMotion
-        ? -9
-        : elapsed < 2.6
-        ? 0.62 * elapsed
-        : ((elapsed - 2.6) % 7) * 0.34;
+      // Stop repeating sonar wave cycle ("this round white circle which keeps on going, stop this")
+      const pulseWave = prefersReducedMotion || elapsed > 2.6 ? -9 : 0.62 * elapsed;
 
       const rot = prefersReducedMotion ? 0 : 0.018 * elapsed;
       const offsetX = mouseX < 9 ? 0.045 * mouseX : 0;

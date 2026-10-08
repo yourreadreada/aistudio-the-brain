@@ -1,6 +1,13 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import * as d3 from 'd3';
-import { Fact, AISource, SOURCE_PALETTE } from '../types/brain';
+import {
+  Fact,
+  AISource,
+  FactFileType,
+  SOURCE_PALETTE,
+  FILE_TYPE_CONFIG,
+  getFactFileType,
+} from '../types/brain';
 
 interface BrainViewerCanvasProps {
   brainName: string;
@@ -17,6 +24,9 @@ interface GraphNode {
   isSourceHub?: boolean;
   sourceKey?: AISource;
   fact?: Fact;
+  fileType?: FactFileType;
+  fileName?: string;
+  factContentLower?: string;
   unclusteredBaseX: number;
   unclusteredBaseY: number;
   clusterHubX: number;
@@ -73,6 +83,22 @@ export const BrainViewerCanvas: React.FC<BrainViewerCanvasProps> = ({
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
   const [currentZoomDisplay, setCurrentZoomDisplay] = useState(100);
 
+  // Performance Optimization Refs for 60/120fps animation loop without React teardown
+  const selectedFactIdRef = useRef(selectedFactId);
+  selectedFactIdRef.current = selectedFactId;
+
+  const hoveredFactRef = useRef(hoveredFact);
+  hoveredFactRef.current = hoveredFact;
+
+  const hoveredClusterRef = useRef(hoveredCluster);
+  hoveredClusterRef.current = hoveredCluster;
+
+  const searchQueryRef = useRef(searchQuery);
+  searchQueryRef.current = searchQuery;
+
+  const activeSourceFilterRef = useRef(activeSourceFilter);
+  activeSourceFilterRef.current = activeSourceFilter;
+
   // D3 Knowledge Density Heat-Map Overlay State
   const [showHeatMap, setShowHeatMap] = useState(false);
   const showHeatMapRef = useRef(showHeatMap);
@@ -98,7 +124,7 @@ export const BrainViewerCanvas: React.FC<BrainViewerCanvasProps> = ({
   useEffect(() => {
     if (lastBrainNameRef.current !== brainName) {
       lastBrainNameRef.current = brainName;
-      // Record quick switch timestamp for a crisp 180ms spring settle
+      // Record quick switch timestamp for an instant sub-180ms spring settle
       brainSwitchTimeRef.current = performance.now();
     }
   }, [searchQuery, activeSourceFilter, brainName]);
@@ -119,7 +145,7 @@ export const BrainViewerCanvas: React.FC<BrainViewerCanvasProps> = ({
   });
 
   // ADAPTIVE GRAPH GENERATOR WITH AUTOMATIC CLUSTERING TOPOLOGY
-  const { nodes, lines, sourceClusters } = useMemo(() => {
+  const { nodes, lines, linesByTier, sourceClusters, factNodes } = useMemo(() => {
     const nodeList: GraphNode[] = [];
     const lineList: GraphLine[] = [];
 
@@ -313,8 +339,22 @@ export const BrainViewerCanvas: React.FC<BrainViewerCanvasProps> = ({
       }
     });
 
-    // Distribute facts around their respective source or sub-branch
-    facts.forEach((fact, fIdx) => {
+    // Distribute facts hierarchically:
+    // 1. Identify document root facts or master facts for files
+    // 2. Parent facts attach directly to the source hub (e.g. Node 1, Node 2, Node 3 under Claude!)
+    // 3. Child sections (by parentId or sharing fileName) branch outwards from that document root node!
+    const factNodeIdxById = new Map<number, number>();
+    const docRootIdxByFileName = new Map<string, number>();
+
+    // First sort facts so that document roots / independent facts come first
+    const sortedFacts = [...facts].sort((a, b) => {
+      const aIsChild = Boolean(a.parentId);
+      const bIsChild = Boolean(b.parentId);
+      if (aIsChild !== bIsChild) return aIsChild ? 1 : -1;
+      return a.id - b.id;
+    });
+
+    sortedFacts.forEach((fact, fIdx) => {
       const hubIdx = hubIndexBySource[fact.source];
       if (hubIdx === undefined) return;
       const hubNode = nodeList[hubIdx];
@@ -324,27 +364,56 @@ export const BrainViewerCanvas: React.FC<BrainViewerCanvasProps> = ({
         dotColor: '#9db4ff',
       };
 
-      const anchors = subBranchAnchors[fact.source] || [];
-      const hasSubBranches = anchors.length > 0;
-      const parentIdx = hasSubBranches ? anchors[fIdx % anchors.length] : hubIdx;
-      const parentNode = nodeList[parentIdx];
+      // Determine parent node index
+      let parentIdx = hubIdx;
+      let isChildNode = false;
 
+      // Check explicit parentId
+      if (fact.parentId && factNodeIdxById.has(fact.parentId)) {
+        parentIdx = factNodeIdxById.get(fact.parentId)!;
+        isChildNode = true;
+      } else if (fact.fileName && docRootIdxByFileName.has(fact.fileName)) {
+        // Child chunk sharing fileName with an already established document root
+        parentIdx = docRootIdxByFileName.get(fact.fileName)!;
+        isChildNode = true;
+      }
+
+      const parentNode = nodeList[parentIdx];
+      const isDocumentMaster = Boolean(fact.isDocumentRoot || fact.isUnifiedContextNode || (!isChildNode && fact.fileName));
+
+      // Sizing & spacing:
+      // Document root nodes attach directly to the source hub (forming the 3rd node under Claude!)
+      // Child turns/sections orbit around their master document node
       const seed = fact.id * 149.3 + fIdx * 23;
       const spreadAngle = (seed * Math.PI) / 180;
-      const spreadDist = isSparse
-        ? 32 + (seed % 48)
-        : hasSubBranches
-        ? 16 + (seed % 34)
-        : 22 + (seed % 55);
+      const spreadDist = isChildNode
+        ? 18 + (seed % 28)
+        : isSparse
+        ? 34 + (seed % 42)
+        : 26 + (seed % 48);
 
       const fx = parentNode.baseX + Math.cos(spreadAngle) * spreadDist;
       const fy = parentNode.baseY + Math.sin(spreadAngle) * spreadDist;
       const factNodeIdx = nodeList.length;
+      const fileType = fact.fileType || getFactFileType(fact);
+
+      factNodeIdxById.set(fact.id, factNodeIdx);
+      if (fact.fileName && !docRootIdxByFileName.has(fact.fileName)) {
+        docRootIdxByFileName.set(fact.fileName, factNodeIdx);
+      }
+
+      const cleanDocTitle = fact.documentTitle || (fact.fileName ? fact.fileName.replace(/\.[^/.]+$/, '') : '');
+      const nodeLabel = isDocumentMaster && cleanDocTitle
+        ? cleanDocTitle.length > 18 ? cleanDocTitle.slice(0, 16) + '..' : cleanDocTitle
+        : `#${fact.id}`;
 
       nodeList.push({
         id: `fact-${fact.id}`,
         fact,
         sourceKey: fact.source,
+        fileType,
+        fileName: fact.fileName,
+        factContentLower: fact.content.toLowerCase(),
         unclusteredBaseX: fx,
         unclusteredBaseY: fy,
         clusterHubX: hubNode.baseX,
@@ -353,7 +422,7 @@ export const BrainViewerCanvas: React.FC<BrainViewerCanvasProps> = ({
         baseY: fy,
         x: fx,
         y: fy,
-        r: factBaseRadius,
+        r: isDocumentMaster ? factBaseRadius * 1.45 : isChildNode ? factBaseRadius * 0.82 : factBaseRadius,
         color: palette.color,
         dotColor: palette.dotColor,
         amp: 1.4 + (fact.id % 3) * 0.6,
@@ -361,16 +430,16 @@ export const BrainViewerCanvas: React.FC<BrainViewerCanvasProps> = ({
         phase2: fact.id * 1.25,
         speed: 0.0003 + (fact.id % 4) * 0.0001,
         twspeed: 0.0008 + (fact.id % 3) * 0.0004,
-        label: `#${fact.id}`,
-        subtext: fact.source,
-        branchLevel: 3,
+        label: nodeLabel,
+        subtext: fact.fileName || fact.source,
+        branchLevel: isChildNode ? 4 : 3,
       });
 
       lineList.push({
         a: parentIdx,
         b: factNodeIdx,
         color: palette.color,
-        baseOpacity: 0.24,
+        baseOpacity: isChildNode ? 0.35 : 0.24,
         tier: 0,
       });
     });
@@ -409,7 +478,20 @@ export const BrainViewerCanvas: React.FC<BrainViewerCanvasProps> = ({
       }
     }
 
-    return { nodes: nodeList, lines: lineList, sourceClusters: clusterMetaList };
+    // Pre-group lines by tier for zero-redundancy O(1) single-pass rendering
+    const tierGroups: GraphLine[][] = [[], [], []];
+    lineList.forEach((ln) => {
+      if (tierGroups[ln.tier]) tierGroups[ln.tier].push(ln);
+      else tierGroups[0].push(ln);
+    });
+
+    return {
+      nodes: nodeList,
+      lines: lineList,
+      linesByTier: tierGroups,
+      sourceClusters: clusterMetaList,
+      factNodes: nodeList.filter((n) => Boolean(n.fact)),
+    };
   }, [facts, brainName]);
 
   // Smooth Pan & Zoom Animator
@@ -491,6 +573,14 @@ export const BrainViewerCanvas: React.FC<BrainViewerCanvasProps> = ({
 
     function render(now: number) {
       if (!ctx) return;
+
+      // Active states from refs (blazing fast, eliminates canvas teardown on hover/search)
+      const selectedFactId = selectedFactIdRef.current;
+      const hoveredFact = hoveredFactRef.current;
+      const hoveredCluster = hoveredClusterRef.current;
+      const searchQuery = searchQueryRef.current;
+      const lowerSearch = searchQuery ? searchQuery.trim().toLowerCase() : '';
+      const activeSourceFilter = activeSourceFilterRef.current;
 
       // Progressive Natural Neural Awakening Clock
       if (revealStartRef.current === null) {
@@ -595,10 +685,8 @@ export const BrainViewerCanvas: React.FC<BrainViewerCanvasProps> = ({
       });
 
       // 2.5 LAYER: D3.JS KNOWLEDGE DENSITY HEAT-MAP OVERLAY (Visualizes high-density knowledge clusters)
-      if (showHeatMapRef.current) {
-        const factNodes = nodes.filter((n) => Boolean(n.fact));
-        if (factNodes.length >= 2) {
-          try {
+      if (showHeatMapRef.current && factNodes.length >= 2) {
+        try {
             const cache = heatMapCacheRef.current;
             const timeSinceCalc = now - cache.lastCalcTime;
             const needsRecalc =
@@ -654,7 +742,6 @@ export const BrainViewerCanvas: React.FC<BrainViewerCanvasProps> = ({
             // fallback gracefully
           }
         }
-      }
 
       // 3. LAYER: AUTOMATIC CLUSTER BOUNDARIES & ENCLOSURES (Rendered when zoomed out)
       if (clusterWeight > 0.04) {
@@ -784,11 +871,12 @@ export const BrainViewerCanvas: React.FC<BrainViewerCanvasProps> = ({
       // Check search filter match
       const isSearchActive = Boolean(searchQuery.trim() || activeSourceFilter);
 
-      // 6. LAYER: Synaptic Links (Intra-cluster lines soften at low zoom; macro conduits stay strong)
+      // 6. LAYER: Synaptic Links (Single-pass grouped rendering, intra-cluster lines soften at low zoom)
       for (let tier = 0; tier < 3; tier++) {
-        for (let l = 0; l < lines.length; l++) {
-          const ln = lines[l];
-          if (ln.tier !== tier) continue;
+        const tierLines = linesByTier[tier];
+        if (!tierLines) continue;
+        for (let l = 0; l < tierLines.length; l++) {
+          const ln = tierLines[l];
 
           const na = nodes[ln.a];
           const nb = nodes[ln.b];
@@ -824,7 +912,7 @@ export const BrainViewerCanvas: React.FC<BrainViewerCanvasProps> = ({
           } else if (isSearchActive && nb.fact) {
             const matches =
               (!activeSourceFilter || nb.fact.source === activeSourceFilter) &&
-              (!searchQuery || nb.fact.content.toLowerCase().includes(searchQuery.toLowerCase()));
+              (!lowerSearch || (nb.factContentLower ? nb.factContentLower.includes(lowerSearch) : false));
             opacity = matches ? 0.8 : 0.05;
           }
 
@@ -852,14 +940,14 @@ export const BrainViewerCanvas: React.FC<BrainViewerCanvasProps> = ({
             ctx.lineWidth = 0.8;
           } else {
             ctx.strokeStyle = ln.color;
-            ctx.setLineDash([]);
             ctx.lineWidth = isFactLine ? 0.85 : 1.4;
           }
 
           ctx.globalAlpha = opacity;
           ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.globalAlpha = 1;
+          if (ln.isCrossLink) {
+            ctx.setLineDash([]);
+          }
 
           // Animated synapsing pulse particle along line (only active when not heavily clustered)
           if (opacity > 0.15 && !ln.isCrossLink && clusterWeight < 0.6) {
@@ -917,7 +1005,7 @@ export const BrainViewerCanvas: React.FC<BrainViewerCanvasProps> = ({
           } else if (isSearchActive) {
             const matches =
               (!activeSourceFilter || nd.fact.source === activeSourceFilter) &&
-              (!searchQuery || nd.fact.content.toLowerCase().includes(searchQuery.toLowerCase()));
+              (!lowerSearch || (nd.factContentLower ? nd.factContentLower.includes(lowerSearch) : false));
             alpha = matches ? (isHovered ? 1 : 0.92) : 0.14;
           } else {
             alpha = 0.58 + 0.32 * Math.sin(now * nd.twspeed + nd.phase2);
@@ -950,6 +1038,15 @@ export const BrainViewerCanvas: React.FC<BrainViewerCanvasProps> = ({
           ctx.globalAlpha = isSelected || isHovered ? 0.9 : 0.5;
           ctx.stroke();
           ctx.globalAlpha = 1;
+        } else if (nd.fact && (nd.fact.isUnifiedContextNode || (nd.fact.isDocumentRoot && nd.fact.fileName))) {
+          // Unified Coherent Context Node Subtle Harmonic Resonance
+          ctx.beginPath();
+          ctx.arc(nd.x, nd.y, radius + 3.2, 0, Math.PI * 2);
+          ctx.strokeStyle = nd.color;
+          ctx.lineWidth = 0.9;
+          ctx.globalAlpha = 0.26 + 0.14 * Math.sin(now * 0.002 + nd.phase);
+          ctx.stroke();
+          ctx.globalAlpha = 1;
         }
 
         // Solid Node Core
@@ -959,6 +1056,8 @@ export const BrainViewerCanvas: React.FC<BrainViewerCanvasProps> = ({
         ctx.globalAlpha = alpha;
         ctx.fill();
         ctx.globalAlpha = 1;
+
+
 
         // Monospace Typography Labels (Level of Detail: hide small fact labels when clustered or not yet awakened)
         const labelDelay = nd.isCenter ? 0.45 : nd.isSourceHub ? 1.1 : 1.95;
@@ -996,7 +1095,7 @@ export const BrainViewerCanvas: React.FC<BrainViewerCanvasProps> = ({
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerleave', handlePointerLeave);
     };
-  }, [nodes, lines, sourceClusters, selectedFactId, hoveredFact, hoveredCluster, searchQuery, activeSourceFilter]);
+  }, [nodes, lines, sourceClusters]);
 
   // Pointer Drag, Hit Testing & Cluster Zoom
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -1042,31 +1141,43 @@ export const BrainViewerCanvas: React.FC<BrainViewerCanvasProps> = ({
           break;
         }
       }
-      setHoveredCluster(hitCluster);
+
+      if (hoveredClusterRef.current?.source !== hitCluster?.source) {
+        setHoveredCluster(hitCluster);
+      }
+
       if (hitCluster) {
-        setHoveredFact(null);
+        if (hoveredFactRef.current) setHoveredFact(null);
         setTooltipPos({ x: e.clientX, y: e.clientY });
         return;
       }
-    } else {
+    } else if (hoveredClusterRef.current) {
       setHoveredCluster(null);
     }
 
-    // Hit test individual fact nodes
+    // Hit test individual fact nodes with fast bounding-box pre-filtering
     let hitFact: Fact | null = null;
     for (const nd of nodes) {
       if (!nd.fact) continue;
+      const threshold = Math.max(12, nd.r * 2.8);
+      if (Math.abs(mouseX - nd.x) > threshold || Math.abs(mouseY - nd.y) > threshold) {
+        continue;
+      }
       const dist = Math.hypot(mouseX - nd.x, mouseY - nd.y);
-      if (dist <= Math.max(12, nd.r * 2.8)) {
+      if (dist <= threshold) {
         hitFact = nd.fact;
         break;
       }
     }
 
-    setHoveredFact(hitFact);
+    // Only update React state if hovered target actually changed to prevent render storms
+    if (hoveredFactRef.current?.id !== hitFact?.id) {
+      setHoveredFact(hitFact);
+    }
+
     if (hitFact) {
       setTooltipPos({ x: e.clientX, y: e.clientY });
-    } else if (!hoveredCluster) {
+    } else if (!hoveredClusterRef.current && tooltipPos !== null) {
       setTooltipPos(null);
     }
   };
@@ -1193,6 +1304,7 @@ export const BrainViewerCanvas: React.FC<BrainViewerCanvasProps> = ({
           <span className="text-[11px]">{showHeatMap ? '🔥' : '♨'}</span>
           <span>{showHeatMap ? 'Heat Map: ON' : 'Heat Map'}</span>
         </button>
+
       </div>
 
       {/* Floating Thermal Density Legend when Heat-Map is active */}
@@ -1235,33 +1347,67 @@ export const BrainViewerCanvas: React.FC<BrainViewerCanvasProps> = ({
       )}
 
       {/* Individual Fact Hover Tooltip (When inspecting) */}
-      {hoveredFact && tooltipPos && !hoveredCluster && (
-        <div
-          className="pointer-events-none fixed z-50 max-w-sm rounded-xl border border-white/20 bg-[#070913]/95 px-3.5 py-2.5 shadow-2xl backdrop-blur-xl transition-all duration-75"
-          style={{
-            left: `${tooltipPos.x + 16}px`,
-            top: `${tooltipPos.y + 16}px`,
-          }}
-        >
-          <div className="flex items-center gap-2">
-            <span
-              className="h-2 w-2 rounded-full"
-              style={{ backgroundColor: SOURCE_PALETTE[hoveredFact.source]?.color }}
-            />
-            <span className="mono text-xs font-semibold uppercase tracking-wider text-white">
-              {SOURCE_PALETTE[hoveredFact.source]?.name || hoveredFact.source}
-            </span>
-            <span className="text-white/30">·</span>
-            <span className="mono text-[10px] text-white/50">#{hoveredFact.id}</span>
+      {hoveredFact && tooltipPos && !hoveredCluster && (() => {
+        const fileType = hoveredFact.fileType || getFactFileType(hoveredFact);
+        const fMeta = FILE_TYPE_CONFIG[fileType];
+        return (
+          <div
+            className="pointer-events-none fixed z-50 max-w-sm rounded-xl border border-white/20 bg-[#070913]/95 px-3.5 py-2.5 shadow-2xl backdrop-blur-xl transition-all duration-75"
+            style={{
+              left: `${tooltipPos.x + 16}px`,
+              top: `${tooltipPos.y + 16}px`,
+            }}
+          >
+            <div className="flex items-center gap-2 flex-wrap">
+              <span
+                className="h-2 w-2 rounded-full"
+                style={{ backgroundColor: SOURCE_PALETTE[hoveredFact.source]?.color }}
+              />
+              <span className="mono text-xs font-semibold uppercase tracking-wider text-white">
+                {SOURCE_PALETTE[hoveredFact.source]?.name || hoveredFact.source}
+              </span>
+              <span className="text-white/30">·</span>
+              <span className="mono text-[10px] text-white/50">#{hoveredFact.id}</span>
+              <span
+                className="mono flex items-center gap-1 rounded px-1.5 py-0.2 text-[9.5px] font-semibold"
+                style={{
+                  color: fMeta.color,
+                  backgroundColor: fMeta.color + '22',
+                  border: `1px solid ${fMeta.color}44`,
+                }}
+              >
+                <span>{fMeta.iconSymbol}</span>
+                <span>{fMeta.badge}</span>
+              </span>
+            </div>
+            {hoveredFact.fileName && (
+              <div className="mt-1 flex items-center justify-between gap-1 mono text-[10px] text-white/70 bg-white/5 px-1.5 py-0.5 rounded border border-white/10">
+                <span className="truncate">📄 {hoveredFact.fileName}</span>
+                {hoveredFact.isUnifiedContextNode && (
+                  <span className="text-amber-300 bg-amber-500/20 px-1 py-0.2 rounded font-semibold text-[9px] shrink-0">
+                    Unified Context
+                  </span>
+                )}
+              </div>
+            )}
+            {hoveredFact.isUnifiedContextNode && !hoveredFact.fileName && (
+              <div className="mt-1 flex items-center gap-1 mono text-[9.5px] text-amber-300 bg-amber-500/15 px-1.5 py-0.5 rounded border border-amber-500/30">
+                <span>🌳</span>
+                <span>Unified Coherent Context Node</span>
+                {hoveredFact.semanticSectionCount ? (
+                  <span className="text-white/50">· {hoveredFact.semanticSectionCount} sections</span>
+                ) : null}
+              </div>
+            )}
+            <p className="mt-1 line-clamp-2 text-xs text-white/90 leading-relaxed">
+              {hoveredFact.content}
+            </p>
+            <p className="mono mt-1 text-[10px] text-white/40">
+              Click node to inspect, tag, or correct
+            </p>
           </div>
-          <p className="mt-1 line-clamp-2 text-xs text-white/90 leading-relaxed">
-            {hoveredFact.content}
-          </p>
-          <p className="mono mt-1 text-[10px] text-white/40">
-            Click to inspect or correct
-          </p>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 };

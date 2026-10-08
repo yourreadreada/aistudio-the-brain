@@ -46,6 +46,24 @@ export const InteractiveBrainGraph: React.FC<InteractiveBrainGraphProps> = ({
     });
   }, [activeCategory, activeSource, searchQuery]);
 
+  const filteredIdSet = useMemo(() => new Set(filteredNodes.map((n) => n.id)), [filteredNodes]);
+  const selectedConnections = useMemo(() => {
+    const sel = INITIAL_BRAIN_NODES.find((n) => n.id === selectedNodeId);
+    return sel ? new Set(sel.connections) : new Set<string>();
+  }, [selectedNodeId]);
+
+  const selectedNodeIdRef = useRef(selectedNodeId);
+  selectedNodeIdRef.current = selectedNodeId;
+
+  const hoveredNodeRef = useRef(hoveredNode);
+  hoveredNodeRef.current = hoveredNode;
+
+  const filteredIdSetRef = useRef(filteredIdSet);
+  filteredIdSetRef.current = filteredIdSet;
+
+  const selectedConnectionsRef = useRef(selectedConnections);
+  selectedConnectionsRef.current = selectedConnections;
+
   // Trigger sonar wave on search change
   useEffect(() => {
     scanTimeRef.current = 0;
@@ -78,10 +96,20 @@ export const InteractiveBrainGraph: React.FC<InteractiveBrainGraphProps> = ({
 
     const startTime = performance.now();
 
+    const nodePos = new Map<string, { x: number; y: number; r: number; node: BrainNode }>();
+    INITIAL_BRAIN_NODES.forEach((node) => {
+      nodePos.set(node.id, { x: 0, y: 0, r: 7, node });
+    });
+
     function render(time: number) {
       if (!ctx) return;
       const elapsed = (time - startTime) / 1000;
       scanTimeRef.current += 0.016;
+
+      const selectedNodeId = selectedNodeIdRef.current;
+      const hoveredNode = hoveredNodeRef.current;
+      const filteredIdSet = filteredIdSetRef.current;
+      const selectedConnections = selectedConnectionsRef.current;
 
       // Clear with deep space black
       ctx.fillStyle = '#03040a';
@@ -106,7 +134,7 @@ export const InteractiveBrainGraph: React.FC<InteractiveBrainGraphProps> = ({
       }
       ctx.stroke();
 
-      // Ambient Center Glow
+      // Clean ambient center glow (radar circle removed for realistic brain topology)
       const centerX = width / 2 + pan.x;
       const centerY = height / 2 + pan.y;
       const baseRadius = Math.min(width, height) * 0.45 * pan.zoom;
@@ -125,21 +153,7 @@ export const InteractiveBrainGraph: React.FC<InteractiveBrainGraphProps> = ({
       ctx.fillStyle = radialGlow;
       ctx.fillRect(0, 0, width, height);
 
-      // Sonar Scan Ring
-      const scanProgress = (scanTimeRef.current % 3.6) / 3.6;
-      const scanRadius = scanProgress * baseRadius * 1.5;
-      const scanAlpha = Math.max(0, 1 - scanProgress) * 0.28;
-
-      ctx.beginPath();
-      ctx.arc(centerX, centerY, scanRadius, 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(157, 180, 255, ${scanAlpha})`;
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-
-      // Map node screen positions
-      const nodePos = new Map<string, { x: number; y: number; node: BrainNode }>();
-      const nodeRadiusMap = new Map<string, number>();
-
+      // Update node screen positions
       INITIAL_BRAIN_NODES.forEach((node) => {
         // Slight organic orbital breathing motion
         const breath = 0.012 * Math.sin(elapsed * 0.8 + node.importance);
@@ -149,9 +163,12 @@ export const InteractiveBrainGraph: React.FC<InteractiveBrainGraphProps> = ({
         const screenX = centerX + effectiveX * baseRadius;
         const screenY = centerY + effectiveY * baseRadius;
 
-        nodePos.set(node.id, { x: screenX, y: screenY, node });
-        const baseR = 5 + node.importance * 1.8;
-        nodeRadiusMap.set(node.id, baseR * Math.sqrt(pan.zoom));
+        const entry = nodePos.get(node.id);
+        if (entry) {
+          entry.x = screenX;
+          entry.y = screenY;
+          entry.r = (5 + node.importance * 1.8) * Math.sqrt(pan.zoom);
+        }
       });
 
       // Draw Connections (Synapses)
@@ -169,8 +186,8 @@ export const InteractiveBrainGraph: React.FC<InteractiveBrainGraphProps> = ({
             selectedNodeId === node.id || selectedNodeId === targetId;
           const isSelected = selectedNodeId === node.id && selectedNodeId === targetId;
           const isMatchingFilter =
-            filteredNodes.some((n) => n.id === node.id) &&
-            filteredNodes.some((n) => n.id === targetId);
+            filteredIdSet.has(node.id) &&
+            filteredIdSet.has(targetId);
 
           ctx.beginPath();
           ctx.moveTo(from.x, from.y);
@@ -229,15 +246,13 @@ export const InteractiveBrainGraph: React.FC<InteractiveBrainGraphProps> = ({
         const pos = nodePos.get(node.id);
         if (!pos) return;
 
-        const isFiltered = filteredNodes.some((n) => n.id === node.id);
+        const isFiltered = filteredIdSet.has(node.id);
         const isSelected = selectedNodeId === node.id;
-        const isConnectedToSelected =
-          Boolean(selectedNodeId) &&
-          INITIAL_BRAIN_NODES.find((n) => n.id === selectedNodeId)?.connections.includes(node.id);
+        const isConnectedToSelected = selectedConnections.has(node.id);
         const isHovered = hoveredNode?.id === node.id;
 
         const colors = CATEGORY_COLORS[node.category];
-        const r = nodeRadiusMap.get(node.id) || 7;
+        const r = pos.r || 7;
 
         let alpha = 0.25;
         if (selectedNodeId) {
@@ -303,7 +318,7 @@ export const InteractiveBrainGraph: React.FC<InteractiveBrainGraphProps> = ({
       cancelAnimationFrame(animId);
       window.removeEventListener('resize', resize);
     };
-  }, [filteredNodes, selectedNodeId, hoveredNode]);
+  }, []);
 
   // Pointer interactions for hovering & clicking nodes
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {

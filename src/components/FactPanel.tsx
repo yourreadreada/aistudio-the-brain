@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Fact, SOURCE_PALETTE } from '../types/brain';
+import { Fact, SOURCE_PALETTE, getFactFileType, FILE_TYPE_CONFIG } from '../types/brain';
 import { brainStore } from '../services/brainStorage';
+import { parseSemanticSections } from '../services/semanticChunker';
 import { BrainLogo } from './BrainLogo';
 
 interface FactPanelProps {
@@ -24,6 +25,7 @@ export const FactPanel: React.FC<FactPanelProps> = ({
   const [isSavedToast, setIsSavedToast] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
+  const [viewMode, setViewMode] = useState<'reader' | 'edit'>('reader');
 
   // Track the active fact id so we don't wipe editing state when fact metadata updates
   const lastFactIdRef = useRef<number | null>(null);
@@ -38,6 +40,7 @@ export const FactPanel: React.FC<FactPanelProps> = ({
         setIsSavedToast(false);
         setIsCopied(false);
         setIsConfirmingDelete(false);
+        setViewMode('reader');
       }
     } else {
       lastFactIdRef.current = null;
@@ -139,28 +142,136 @@ export const FactPanel: React.FC<FactPanelProps> = ({
           <h2 className="text-xl font-medium leading-tight text-white tracking-tight">
             Fact #{fact.id}
           </h2>
-          <span
-            className="mono flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[10.5px] font-semibold uppercase"
-            style={{
-              color: sourceMeta.color,
-              backgroundColor: sourceMeta.color + '1a',
-              border: `1px solid ${sourceMeta.color}33`,
-            }}
-          >
-            <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: sourceMeta.color }} />
-            {sourceMeta.name}
-          </span>
+          <div className="flex items-center gap-1.5">
+            {/* File Type Badge */}
+            {(() => {
+              const fileType = getFactFileType(fact);
+              const meta = FILE_TYPE_CONFIG[fileType];
+              return (
+                <span
+                  className="mono flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold"
+                  style={{
+                    color: meta.color,
+                    backgroundColor: meta.color + '1a',
+                    border: `1px solid ${meta.color}40`,
+                  }}
+                  title={meta.label}
+                >
+                  <span>{meta.iconSymbol}</span>
+                  <span>{meta.badge}</span>
+                </span>
+              );
+            })()}
+
+            {/* AI Source Origin Badge */}
+            <span
+              className="mono flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[10.5px] font-semibold uppercase"
+              style={{
+                color: sourceMeta.color,
+                backgroundColor: sourceMeta.color + '1a',
+                border: `1px solid ${sourceMeta.color}33`,
+              }}
+            >
+              <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: sourceMeta.color }} />
+              {sourceMeta.name}
+            </span>
+          </div>
         </div>
 
-        {/* Subtitle */}
-        <p className="mono mt-1 text-[11px] text-white/45">
-          Brain: <span className="text-white/80">{fact.brain}</span> · Updated {formattedDate}
-        </p>
+        {/* Subtitle with File Name */}
+        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 mono text-[11px] text-white/45">
+          <span>
+            Brain: <span className="text-white/80">{fact.brain}</span>
+          </span>
+          <span>·</span>
+          <span>Updated {formattedDate}</span>
+          {fact.fileName && (
+            <>
+              <span>·</span>
+              <span className="truncate text-white/70 bg-white/5 rounded px-1.5 py-0.5 border border-white/10" title={fact.fileName}>
+                📄 {fact.fileName}
+              </span>
+            </>
+          )}
+          {fact.isUnifiedContextNode ? (
+            <span className="text-amber-300 bg-amber-500/15 border border-amber-500/30 rounded px-1.5 py-0.5 font-semibold flex items-center gap-1">
+              <span>🌳</span>
+              <span>Unified Coherent Context Node</span>
+              {fact.semanticSectionCount ? (
+                <span className="text-amber-200/80 font-normal">({fact.semanticSectionCount} turns/sections)</span>
+              ) : null}
+            </span>
+          ) : fact.isDocumentRoot ? (
+            <span className="text-amber-300 bg-amber-500/15 border border-amber-500/30 rounded px-1.5 py-0.5 font-semibold">
+              🌳 Document Hub
+            </span>
+          ) : null}
+          {fact.parentId && (
+            <span className="text-indigo-300 bg-indigo-500/15 border border-indigo-500/30 rounded px-1.5 py-0.5">
+              ↳ Child Turn of #{fact.parentId}
+            </span>
+          )}
+        </div>
+
+        {/* Incremental Merge & Update History (if file was updated) */}
+        {fact.mergeHistory && fact.mergeHistory.length > 0 && (
+          <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.02] p-3 space-y-1.5">
+            <div className="flex items-center justify-between mono text-[10.5px] text-white/50">
+              <span className="flex items-center gap-1.5 text-white/70 font-semibold">
+                <span>🔄</span>
+                <span>Incremental Update History</span>
+              </span>
+              <span className="text-amber-300/80">{fact.mergeHistory.length} event(s)</span>
+            </div>
+            <div className="space-y-1.5 pt-1">
+              {fact.mergeHistory.map((hist, hIdx) => (
+                <div
+                  key={hIdx}
+                  className="rounded-lg bg-black/40 border border-white/5 p-2 text-[11px] leading-snug space-y-0.5"
+                >
+                  <div className="flex items-center justify-between text-white/40 mono text-[9.5px]">
+                    <span className="capitalize text-emerald-400 font-medium">✓ {hist.action}</span>
+                    <span>{new Date(hist.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
+                  <p className="text-white/80">{hist.summary}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Content Field */}
         <div className="mt-5 flex flex-col gap-2">
           <div className="flex items-center justify-between">
-            <span className="mono text-[11px] text-white/50">Memory Content</span>
+            <div className="flex items-center gap-2">
+              <span className="mono text-[11px] text-white/50">Memory Content</span>
+              {content.length > 300 && (
+                <div className="flex rounded-lg border border-white/15 bg-black/40 p-0.5 mono text-[10px]">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('reader')}
+                    className={`px-2 py-0.5 rounded transition ${
+                      viewMode === 'reader'
+                        ? 'bg-white text-black font-semibold'
+                        : 'text-white/50 hover:text-white'
+                    }`}
+                  >
+                    Formatted
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('edit')}
+                    className={`px-2 py-0.5 rounded transition ${
+                      viewMode === 'edit'
+                        ? 'bg-white text-black font-semibold'
+                        : 'text-white/50 hover:text-white'
+                    }`}
+                  >
+                    Edit / Raw
+                  </button>
+                </div>
+              )}
+            </div>
             <button
               onClick={handleCopy}
               className="mono text-[11px] text-white/50 transition hover:text-white"
@@ -169,26 +280,61 @@ export const FactPanel: React.FC<FactPanelProps> = ({
             </button>
           </div>
 
-          <textarea
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            rows={6}
-            placeholder="Fact text..."
-            className="w-full rounded-xl border border-white/20 bg-black/40 p-3.5 text-xs text-white leading-relaxed outline-none backdrop-blur-md transition placeholder:text-white/30 focus:border-white/45 focus:bg-black/60"
-          />
+          {viewMode === 'reader' && (content.includes('#### User') || content.includes('#### Assistant')) ? (
+            /* Formatted Conversation Turns for Chat Logs */
+            <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1 scrollbar-thin">
+              {content.split(/(?=#### (?:User|Assistant))/g).filter(Boolean).map((turn, tIdx) => {
+                const isUser = turn.startsWith('#### User');
+                const isAssistant = turn.startsWith('#### Assistant');
+                const cleanBody = turn.replace(/^#### (?:User|Assistant)\s*/, '').trim();
+                return (
+                  <div
+                    key={tIdx}
+                    className={`rounded-xl p-3 text-xs leading-relaxed border ${
+                      isUser
+                        ? 'bg-white/[0.04] border-white/15 text-white/95'
+                        : isAssistant
+                        ? 'bg-[#18131d]/80 border-[#d85a30]/30 text-white/90'
+                        : 'bg-black/40 border-white/10 text-white/80'
+                    }`}
+                  >
+                    <div className="mono text-[10px] font-semibold uppercase mb-1.5 flex items-center gap-1.5">
+                      <span>{isUser ? '👤 User' : isAssistant ? '🤖 Assistant' : '📝 Note'}</span>
+                    </div>
+                    <div className="whitespace-pre-wrap">{cleanBody}</div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : viewMode === 'reader' && content.length > 400 ? (
+            /* Formatted Reader View for Long Documents */
+            <div className="rounded-xl border border-white/20 bg-black/40 p-3.5 text-xs text-white leading-relaxed max-h-[380px] overflow-y-auto whitespace-pre-wrap scrollbar-thin">
+              {content}
+            </div>
+          ) : (
+            <textarea
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              rows={Math.min(12, Math.max(5, Math.ceil(content.length / 55)))}
+              placeholder="Fact text..."
+              className="w-full rounded-xl border border-white/20 bg-black/40 p-3.5 text-xs text-white leading-relaxed outline-none backdrop-blur-md transition placeholder:text-white/30 focus:border-white/45 focus:bg-black/60 font-mono"
+            />
+          )}
 
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={!content.trim()}
-            className={`mono min-h-10 w-full rounded-xl py-2.5 text-xs font-semibold transition active:scale-[0.98] ${
-              isSavedToast
-                ? 'bg-emerald-400 text-black shadow-lg shadow-emerald-500/20'
-                : 'bg-white/95 text-black hover:bg-white disabled:opacity-40'
-            }`}
-          >
-            {isSavedToast ? '✓ Saved Correction' : 'Save correction'}
-          </button>
+          {(viewMode === 'edit' || (!content.includes('#### User') && content.length <= 400)) && (
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={!content.trim()}
+              className={`mono min-h-10 w-full rounded-xl py-2.5 text-xs font-semibold transition active:scale-[0.98] ${
+                isSavedToast
+                  ? 'bg-emerald-400 text-black shadow-lg shadow-emerald-500/20'
+                  : 'bg-white/95 text-black hover:bg-white disabled:opacity-40'
+              }`}
+            >
+              {isSavedToast ? '✓ Saved Correction' : 'Save correction'}
+            </button>
+          )}
         </div>
 
         {/* Custom Tagging Section */}

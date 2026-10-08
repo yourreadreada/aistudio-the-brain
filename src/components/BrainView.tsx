@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Fact, AISource, SOURCE_PALETTE, RecentActivityItem } from '../types/brain';
+import { Fact, AISource, FactFileType, IngestStrategy, SOURCE_PALETTE, RecentActivityItem } from '../types/brain';
 import { brainStore } from '../services/brainStorage';
 import { BrainAppHeader } from './BrainAppHeader';
 import { BrainViewerCanvas } from './BrainViewerCanvas';
@@ -100,14 +100,29 @@ export const BrainView: React.FC<BrainViewProps> = ({ userEmail, initialBrainNam
     refreshData();
   }, [currentBrain, searchQuery, activeSourceFilter]);
 
+  // Subscribe to brainStore so async backend synchronization updates the UI live
+  useEffect(() => {
+    const unsubscribe = brainStore.subscribe(() => {
+      refreshData();
+      refreshActivities();
+    });
+    return unsubscribe;
+  }, []);
+
   const handleCreateBrain = (name: string) => {
     brainStore.createBrain(name);
     setCurrentBrain(name);
     refreshData();
   };
 
-  const handleAddFact = (brain: string, content: string, source: AISource) => {
-    const newFact = brainStore.remember(brain, content, source);
+  const handleAddFact = (
+    brain: string,
+    content: string,
+    source: AISource,
+    fileName?: string,
+    fileType?: FactFileType
+  ) => {
+    const newFact = brainStore.remember(brain, content, source, fileName, fileType);
     if (brain !== currentBrain) {
       setCurrentBrain(brain);
     }
@@ -143,8 +158,25 @@ export const BrainView: React.FC<BrainViewProps> = ({ userEmail, initialBrainNam
     }
   };
 
-  const handleIngest = (brain: string, source: AISource, rawText: string, chunkSize: number) => {
-    const count = brainStore.ingest(brain, source, rawText, chunkSize);
+  const handleIngest = (
+    brain: string,
+    source: AISource,
+    rawText: string,
+    chunkSize: number,
+    fileName?: string,
+    fileType?: FactFileType,
+    strategy: IngestStrategy = 'single'
+  ) => {
+    const count = brainStore.ingest(
+      brain,
+      source,
+      rawText,
+      chunkSize,
+      fileName,
+      fileType,
+      undefined,
+      strategy
+    );
     if (brain !== currentBrain) {
       setCurrentBrain(brain);
     }
