@@ -83,6 +83,79 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json([dict(r) for r in rows])
             return
 
+        if parsed.path == "/api/recall":
+            qs = parse_qs(parsed.query)
+            brain = (qs.get("brain") or [""])[0]
+            query = (qs.get("query") or [""])[0]
+            limit = int((qs.get("limit") or ["10"])[0])
+            if not brain:
+                self._send_json({"error": "missing ?brain="}, status=400)
+                return
+            rows = db.recall(brain=brain, query=query, limit=limit)
+            self._send_json([dict(r) for r in rows])
+            return
+
+        if parsed.path == "/api/openapi.json":
+            spec = {
+                "openapi": "3.1.0",
+                "info": {
+                    "title": "The Brain API",
+                    "description": "Two-way personal memory storage and retrieval across AI tools.",
+                    "version": "1.0.0"
+                },
+                "servers": [{"url": "http://localhost:8787"}],
+                "paths": {
+                    "/api/recall": {
+                        "get": {
+                            "summary": "Recall memories from the brain",
+                            "operationId": "recallMemories",
+                            "parameters": [
+                                {"name": "brain", "in": "query", "required": True, "schema": {"type": "string"}},
+                                {"name": "query", "in": "query", "required": False, "schema": {"type": "string"}},
+                                {"name": "limit", "in": "query", "required": False, "schema": {"type": "integer", "default": 10}}
+                            ],
+                            "responses": {
+                                "200": {
+                                    "description": "Matching facts list",
+                                    "content": {"application/json": {"schema": {"type": "array", "items": {"type": "object"}}}}
+                                }
+                            }
+                        }
+                    },
+                    "/api/remember": {
+                        "post": {
+                            "summary": "Store a new fact or decision in the brain",
+                            "operationId": "rememberFact",
+                            "requestBody": {
+                                "required": True,
+                                "content": {
+                                    "application/json": {
+                                        "schema": {
+                                            "type": "object",
+                                            "required": ["brain", "content", "source"],
+                                            "properties": {
+                                                "brain": {"type": "string"},
+                                                "content": {"type": "string"},
+                                                "source": {"type": "string"},
+                                                "file_name": {"type": "string"}
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            "responses": {
+                                "200": {
+                                    "description": "Stored fact confirmation",
+                                    "content": {"application/json": {"schema": {"type": "object"}}}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            self._send_json(spec)
+            return
+
         self._send_json({"error": "not found"}, status=404)
 
     def do_POST(self):  # noqa: N802
@@ -170,6 +243,16 @@ class Handler(BaseHTTPRequestHandler):
                 return
             ok = db.forget(fact_id=int(fact_id))
             self._send_json({"ok": ok})
+            return
+
+        if parsed.path == "/api/delete_brain":
+            body = self._read_json_body()
+            brain = (body.get("brain") or "").strip()
+            if not brain:
+                self._send_json({"error": "brain required"}, status=400)
+                return
+            count = db.delete_brain(brain=brain)
+            self._send_json({"ok": True, "brain": brain, "deleted_facts": count})
             return
 
         self._send_json({"error": "not found"}, status=404)

@@ -520,6 +520,42 @@ export const BrainViewerCanvas: React.FC<BrainViewerCanvasProps> = ({
     animFrameRef.current = requestAnimationFrame(step);
   };
 
+  // Smooth Zoom-to-Fit behavior: When a node is selected and FactPanel opens,
+  // pans and zooms smoothly to center that specific fact cluster in the visible viewport.
+  const wasFactSelectedRef = useRef(false);
+  useEffect(() => {
+    if (selectedFactId !== null) {
+      const selectedFact = facts.find((f) => f.id === selectedFactId);
+      if (!selectedFact) return;
+      const cluster = sourceClusters.find((c) => c.source === selectedFact.source);
+      if (!cluster) return;
+
+      const canvas = canvasRef.current;
+      const width = canvas ? canvas.clientWidth : window.innerWidth;
+      const height = canvas ? canvas.clientHeight : window.innerHeight;
+
+      // The inspection FactPanel slides over from the right taking ~360px
+      const panelWidth = Math.min(360, width * 0.85);
+      const availWidth = Math.max(200, width - panelWidth);
+      // Offset so the cluster is centered in the remaining visible area to the left of the open panel
+      const shiftX = -panelWidth / 2;
+
+      // Cluster diameter with comfortable breathing padding
+      const clusterDiameter = cluster.clusterRadius * 2 + 40;
+      const targetZoom = Math.max(1.15, Math.min(2.1, (Math.min(availWidth, height) * 0.72) / clusterDiameter));
+
+      const targetPanX = shiftX - cluster.x * targetZoom;
+      const targetPanY = -cluster.y * targetZoom;
+
+      animatePanZoom(targetPanX, targetPanY, targetZoom, 520);
+      wasFactSelectedRef.current = true;
+    } else if (wasFactSelectedRef.current) {
+      // Panel closed: smoothly return to center overview
+      animatePanZoom(0, 0, 1.0, 480);
+      wasFactSelectedRef.current = false;
+    }
+  }, [selectedFactId, sourceClusters, facts]);
+
   // Main Render Loop with Multi-Layer Atmospheric Lighting and Automatic Node Clustering
   useEffect(() => {
     const canvas = canvasRef.current;

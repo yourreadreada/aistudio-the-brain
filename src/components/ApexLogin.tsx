@@ -1,1 +1,1 @@
-export { WelcomeView as ApexLogin, WelcomeView } from './WelcomeView';
+export { WelcomeView as ApexLogin } from './WelcomeView';

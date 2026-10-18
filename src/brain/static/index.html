@@ -101,7 +101,7 @@ function layout(facts){
     var hx = CX + Math.cos(ang)*clusterRadius, hy = CY + Math.sin(ang)*clusterRadius;
     var hubIdx = nodes.length;
     hubIdxBySource[src] = hubIdx;
-    nodes.push({baseX:hx, baseY:hy, x:hx, y:hy, r:5, fill:sourceColor(src, sources), static:true, fact:null});
+    nodes.push({baseX:hx, baseY:hy, x:hx, y:hy, r:5, fill:sourceColor(src, sources), static:true, fact:null, hubSource:src});
     lines.push({a:centerIdx, b:hubIdx, op:0.3});
   });
 
@@ -115,7 +115,9 @@ function layout(facts){
       baseX:bx, baseY:by, x:bx, y:by, r:3.2, fill:sourceColor(f.source, sources), static:false,
       amp:1+Math.random()*2, phase:Math.random()*6.283, phase2:Math.random()*6.283,
       speed:0.0003+Math.random()*0.0005, twspeed:0.0008+Math.random()*0.0018,
-      fact:f
+      fact:f,
+      hubIdx: hubIdx,
+      source: f.source
     });
     lines.push({a:hubIdx, b:idx, op:0.2+Math.random()*0.2});
   });
@@ -123,6 +125,9 @@ function layout(facts){
   legend.innerHTML = sources.map(function(s){
     return '<span class="legend-item"><span class="legend-dot" style="background:'+sourceColor(s,sources)+'"></span>'+s+'</span>';
   }).join("");
+
+  currentVB = { x: 0, y: 0, w: W, h: H };
+  svg.setAttribute("viewBox", "0 0 " + W + " " + H);
 }
 
 function render(){
@@ -168,9 +173,94 @@ function startTicking(){
   if (!reduceMotion) ticking = setInterval(tick, 60);
 }
 
+var currentVB = null;
+var vbAnimId = null;
+
+function animateViewBox(tx, ty, tw, th, duration){
+  if (vbAnimId) cancelAnimationFrame(vbAnimId);
+  duration = duration || 480;
+  if (!currentVB) {
+    currentVB = { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight };
+  }
+  var sx = currentVB.x, sy = currentVB.y, sw = currentVB.w, sh = currentVB.h;
+  if (reduceMotion){
+    currentVB = { x: tx, y: ty, w: tw, h: th };
+    svg.setAttribute("viewBox", tx.toFixed(1) + " " + ty.toFixed(1) + " " + tw.toFixed(1) + " " + th.toFixed(1));
+    return;
+  }
+  var start = performance.now();
+  function step(now){
+    var elapsed = now - start;
+    var p = Math.min(1, elapsed / duration);
+    var ease = 1 - Math.pow(1 - p, 3);
+    var cx = sx + (tx - sx) * ease;
+    var cy = sy + (ty - sy) * ease;
+    var cw = sw + (tw - sw) * ease;
+    var ch = sh + (th - sh) * ease;
+    currentVB = { x: cx, y: cy, w: cw, h: ch };
+    svg.setAttribute("viewBox", cx.toFixed(1) + " " + cy.toFixed(1) + " " + cw.toFixed(1) + " " + ch.toFixed(1));
+    if (p < 1){
+      vbAnimId = requestAnimationFrame(step);
+    }
+  }
+  vbAnimId = requestAnimationFrame(step);
+}
+
+function zoomToClusterForFact(fact){
+  var W = window.innerWidth, H = window.innerHeight;
+  var panelWidth = Math.min(340, W * 0.88);
+  var availW = Math.max(200, W - panelWidth);
+
+  var clusterNodes = nodes.filter(function(nd){
+    return (nd.fact && nd.fact.source === fact.source) || (nd.hubSource === fact.source);
+  });
+
+  if (!clusterNodes.length){
+    var targetNode = nodes.find(function(n){ return n.fact && n.fact.id === fact.id; });
+    if (targetNode) clusterNodes = [targetNode];
+  }
+
+  var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  clusterNodes.forEach(function(nd){
+    minX = Math.min(minX, nd.baseX);
+    maxX = Math.max(maxX, nd.baseX);
+    minY = Math.min(minY, nd.baseY);
+    maxY = Math.max(maxY, nd.baseY);
+  });
+
+  if (minX === Infinity){ minX = W/2 - 50; maxX = W/2 + 50; minY = H/2 - 50; maxY = H/2 + 50; }
+
+  var clusterCX = (minX + maxX) / 2;
+  var clusterCY = (minY + maxY) / 2;
+  var clusterW = Math.max(120, maxX - minX);
+  var clusterH = Math.max(120, maxY - minY);
+
+  var pad = 48;
+  var bw = clusterW + pad * 2;
+  var bh = clusterH + pad * 2;
+
+  var scaleX = bw / (availW * 0.72);
+  var scaleY = bh / (H * 0.72);
+  var targetScale = Math.max(scaleX, scaleY);
+
+  var targetVW = W * targetScale;
+  var targetVH = H * targetScale;
+
+  var visibleCenterX = availW / 2;
+  var visibleCenterY = H / 2;
+
+  var targetVX = clusterCX - (visibleCenterX * targetScale);
+  var targetVY = clusterCY - (visibleCenterY * targetScale);
+
+  animateViewBox(targetVX, targetVY, targetVW, targetVH, 500);
+}
+
 svg.addEventListener("click", function(e){
   var i = e.target.getAttribute && e.target.getAttribute("data-i");
-  if (i === null || i === undefined) return;
+  if (i === null || i === undefined) {
+    if (currentFactId !== null) closePanel();
+    return;
+  }
   var nd = nodes[parseInt(i,10)];
   if (!nd.fact) return;
   openPanel(nd.fact);
@@ -181,8 +271,14 @@ function openPanel(fact){
   panelMeta.textContent = "#" + fact.id + " · " + fact.source + " · updated " + fact.updated_at;
   panelContent.value = fact.content;
   panel.classList.add("open");
+  zoomToClusterForFact(fact);
 }
-function closePanel(){ panel.classList.remove("open"); currentFactId = null; }
+
+function closePanel(){
+  panel.classList.remove("open");
+  currentFactId = null;
+  animateViewBox(0, 0, window.innerWidth, window.innerHeight, 480);
+}
 document.getElementById("closeBtn").onclick = closePanel;
 
 document.getElementById("saveBtn").onclick = function(){

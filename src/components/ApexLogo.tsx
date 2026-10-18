@@ -1,1 +1,1 @@
-export { BrainLogo as ApexLogo, BrainLogo } from './BrainLogo';
+export { BrainLogo as ApexLogo } from './BrainLogo';

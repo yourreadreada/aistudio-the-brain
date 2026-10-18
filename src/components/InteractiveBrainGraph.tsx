@@ -70,6 +70,60 @@ export const InteractiveBrainGraph: React.FC<InteractiveBrainGraphProps> = ({
     isScanningRef.current = true;
   }, [searchQuery, activeCategory, activeSource]);
 
+  // Smooth Zoom-to-Fit Animator
+  const animatePanZoom = (targetX: number, targetY: number, targetZoom: number, duration = 480) => {
+    const startX = panRef.current.x;
+    const startY = panRef.current.y;
+    const startZoom = panRef.current.zoom;
+    const startTime = performance.now();
+
+    const step = (now: number) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(1, elapsed / duration);
+      const ease = 1 - Math.pow(1 - progress, 3);
+
+      panRef.current.x = startX + (targetX - startX) * ease;
+      panRef.current.y = startY + (targetY - startY) * ease;
+      panRef.current.zoom = startZoom + (targetZoom - startZoom) * ease;
+
+      if (progress < 1) {
+        requestAnimationFrame(step);
+      }
+    };
+    requestAnimationFrame(step);
+  };
+
+  const wasNodeSelectedRef = useRef(false);
+  useEffect(() => {
+    if (selectedNodeId) {
+      const node = INITIAL_BRAIN_NODES.find((n) => n.id === selectedNodeId);
+      if (!node) return;
+      const clusterNodes = INITIAL_BRAIN_NODES.filter(
+        (n) => n.category === node.category || n.source === node.source
+      );
+      const avgX = clusterNodes.reduce((acc, n) => acc + n.x, 0) / clusterNodes.length;
+      const avgY = clusterNodes.reduce((acc, n) => acc + n.y, 0) / clusterNodes.length;
+
+      const canvas = canvasRef.current;
+      const width = canvas ? canvas.clientWidth : 800;
+      const height = canvas ? canvas.clientHeight : 600;
+      const baseRadius = Math.min(width, height) * 0.45;
+
+      const panelWidth = Math.min(400, width * 0.42);
+      const shiftX = -panelWidth / 2;
+      const targetZoom = 1.45;
+
+      const targetPanX = shiftX - avgX * baseRadius * targetZoom;
+      const targetPanY = -avgY * baseRadius * targetZoom;
+
+      animatePanZoom(targetPanX, targetPanY, targetZoom, 500);
+      wasNodeSelectedRef.current = true;
+    } else if (wasNodeSelectedRef.current) {
+      animatePanZoom(0, 0, 1.0, 460);
+      wasNodeSelectedRef.current = false;
+    }
+  }, [selectedNodeId]);
+
   // Main rendering loop
   useEffect(() => {
     const canvas = canvasRef.current;

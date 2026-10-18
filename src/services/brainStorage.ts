@@ -500,11 +500,44 @@ class BrainStorageService {
   }
 
   public deleteBrain(name: string): boolean {
-    const toDelete = this.facts.filter((f) => f.brain === name);
-    toDelete.forEach((f) => this.forget(f.id));
-    this.brains = this.brains.filter((b) => b !== name);
+    const trimmed = name.trim().toLowerCase();
+    this.facts = this.facts.filter((f) => f.brain !== trimmed);
+    this.brains = this.brains.filter((b) => b !== trimmed);
+    this.saveLocalFacts();
     this.saveLocalBrains();
+    this.notify();
+
+    fetch(`${API_BASE}/api/delete_brain`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ brain: trimmed }),
+    }).catch(() => {});
+
     return true;
+  }
+
+  public getConnectionStatus(): { chatgpt: boolean; claude: boolean; gemini: boolean; backend: boolean } {
+    try {
+      const raw = localStorage.getItem('brain_ai_connections_v1');
+      const saved = raw ? JSON.parse(raw) : {};
+      return {
+        chatgpt: Boolean(saved.chatgpt),
+        claude: Boolean(saved.claude),
+        gemini: Boolean(saved.gemini),
+        backend: this.backendReachable,
+      };
+    } catch {
+      return { chatgpt: false, claude: false, gemini: false, backend: this.backendReachable };
+    }
+  }
+
+  public setConnectionStatus(service: 'chatgpt' | 'claude' | 'gemini', active: boolean) {
+    try {
+      const current = this.getConnectionStatus();
+      current[service] = active;
+      localStorage.setItem('brain_ai_connections_v1', JSON.stringify(current));
+      this.notify();
+    } catch {}
   }
 
   public recall(brain: string, query: string = '', sourceFilter: string | null = null): Fact[] {
@@ -1022,6 +1055,186 @@ class BrainStorageService {
     lines.push('');
     lines.push(`Instructions for AI: Use the facts above as durable grounding context across turns. When the user updates or corrects any detail, acknowledge the change.`);
     return lines.join('\n');
+  }
+
+  /**
+   * Generates tailored Custom Instructions for ChatGPT Free (Settings -> Personalization).
+   */
+  public generateChatGptCustomInstructions(brain: string): string {
+    const facts = this.recall(brain);
+    const topFacts = facts.slice(0, 10);
+    const factsList = topFacts.length
+      ? topFacts.map((f) => `- [${f.source}] ${f.content}`).join('\n')
+      : '- No initial facts yet; save insights as we work.';
+
+    return `I use a local personal memory system ("The Brain", context: "${brain}").
+Below are my established durable facts, preferences, and project background:
+
+${factsList}
+
+Instructions:
+1. Always ground your answers in the durable facts above.
+2. Whenever I announce a new permanent decision, architectural change, or key insight, summarize it at the end of your response under the heading "### 🧠 SAVED TO BRAIN:" so I can easily capture it into my memory.`;
+  }
+
+  /**
+   * Generates tailored primer prompt for Claude Web Free chats.
+   */
+  public generateClaudePrimer(brain: string): string {
+    const facts = this.recall(brain);
+    return `[THE BRAIN · CONTEXT MEMORY: ${brain.toUpperCase()}]
+Here is my persistent context and established facts from prior sessions:
+${facts.map((f) => `• [#${f.id} | ${f.source}] ${f.content}`).join('\n')}
+
+Instructions:
+Please treat the facts above as ground truth. Whenever we make an architectural decision, establish a project milestone, or correct an earlier premise, explicitly highlight the durable takeaway with:
+"🧠 DURABLE FACT: [Clear, self-contained summary]"
+so it can be synchronized back into my central memory.`;
+  }
+
+  /**
+   * Generates tailored primer prompt for Gemini Web Free chats.
+   */
+  public generateGeminiPrimer(brain: string): string {
+    const facts = this.recall(brain);
+    return `[PERSISTENT GROUNDING CONTEXT: ${brain.toUpperCase()}]
+You are assisting me with my "${brain}" workspace. Ground all responses in these verified facts:
+${facts.map((f) => `• [#${f.id}] ${f.content}`).join('\n')}
+
+When we reach a concrete resolution or finalize a decision, format it clearly with:
+"🧠 SAVED FACT: [Concise takeaway]"`;
+  }
+
+  /**
+   * Returns OpenAPI 3.1.0 specification for ChatGPT Custom GPT Actions.
+   */
+  public getOpenApiSpec(): object {
+    return {
+      openapi: "3.1.0",
+      info: {
+        title: "The Brain API",
+        description: "Two-way memory storage and recall across AI platforms.",
+        version: "1.0.0"
+      },
+      servers: [{ url: "http://localhost:8787" }],
+      paths: {
+        "/api/recall": {
+          get: {
+            summary: "Recall relevant memories from the brain",
+            operationId: "recallMemories",
+            parameters: [
+              { name: "brain", in: "query", required: true, schema: { type: "string" } },
+              { name: "query", in: "query", required: false, schema: { type: "string" } },
+              { name: "limit", in: "query", required: false, schema: { type: "integer", default: 10 } }
+            ],
+            responses: {
+              "200": {
+                description: "List of recalled facts",
+                content: { "application/json": { schema: { type: "array", items: { type: "object" } } } }
+              }
+            }
+          }
+        },
+        "/api/remember": {
+          post: {
+            summary: "Store a new durable fact or decision into the brain",
+            operationId: "rememberFact",
+            requestBody: {
+              required: true,
+              content: {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "required": ["brain", "content", "source"],
+                    "properties": {
+                      "brain": { "type": "string" },
+                      "content": { "type": "string" },
+                      "source": { "type": "string" },
+                      "file_name": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            },
+            responses: {
+              "200": {
+                description: "Fact saved confirmation",
+                content: { "application/json": { schema: { type: "object" } } }
+              }
+            }
+          }
+        }
+      }
+    };
+  }
+
+  /**
+   * Simulates a two-way Web AI interaction (demonstrating real-time recall and saving).
+   */
+  public simulateWebAiInteraction(
+    brain: string,
+    source: AISource,
+    userPrompt: string
+  ): {
+    recalledFacts: Fact[];
+    reply: string;
+    savedFact?: Fact;
+  } {
+    const cleanPrompt = userPrompt.trim();
+    if (!cleanPrompt) {
+      return { recalledFacts: [], reply: "Please enter a message or question to test memory recall." };
+    }
+
+    // Step 1: Query recall
+    // Extract search keywords from prompt
+    const keywords = cleanPrompt
+      .replace(/[^\w\s]/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length > 3 && !['what', 'about', 'this', 'that', 'with', 'from', 'have', 'your', 'please'].includes(w.toLowerCase()));
+
+    let matches = this.recall(brain, keywords.slice(0, 3).join(' '));
+    if (!matches.length) {
+      matches = this.recall(brain, '').slice(0, 3);
+    }
+
+    // Step 2: Check if prompt establishes a new fact to remember
+    const saveTrigger =
+      /(?:remember that|we decided|note that|switched to|migrated to|our rule is|preference is|new requirement)/i.test(cleanPrompt);
+
+    let savedFact: Fact | undefined;
+    if (saveTrigger) {
+      const extractedContent = cleanPrompt
+        .replace(/^(?:please\s+)?(?:remember that|note that|we decided that|we decided to)\s+/i, '')
+        .trim();
+
+      savedFact = this.remember(
+        brain,
+        extractedContent,
+        source,
+        `web-simulated-${source}.md`,
+        'chat',
+        ['web-sync', source]
+      );
+    }
+
+    // Step 3: Formulate intelligent AI reply
+    let reply = '';
+    const aiName = source === 'gpt' ? 'ChatGPT' : source === 'claude' ? 'Claude' : 'Gemini';
+
+    if (savedFact) {
+      reply = `I have updated our shared memory in brain "${brain}".\n\n🧠 SAVED TO BRAIN:\n"${savedFact.content}" (Fact #${savedFact.id})\n\nThis fact is now permanently stored in your SQLite database and will automatically ground all future chats.`;
+    } else if (matches.length > 0) {
+      const top = matches[0];
+      reply = `Based on your stored memory in "${brain}" (Fact #${top.id} from ${top.source.toUpperCase()}):\n\n"${top.content}"\n\nI will use this context to guide our conversation without you having to re-explain it.`;
+    } else {
+      reply = `I am connected to your "${brain}" brain. I didn't find an existing fact matching "${cleanPrompt}", but you can tell me "Remember that [fact]" and I will automatically record it into your memory!`;
+    }
+
+    return {
+      recalledFacts: matches,
+      reply,
+      savedFact,
+    };
   }
 
   public resetToDefaults() {

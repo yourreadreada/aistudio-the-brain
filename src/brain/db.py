@@ -157,6 +157,7 @@ def recall(brain: str, query: str, limit: int = 10) -> list[sqlite3.Row]:
             rows = conn.execute(
                 """
                 SELECT facts.id, facts.brain, facts.content, facts.source,
+                       facts.file_name, facts.file_path,
                        facts.created_at, facts.updated_at
                 FROM facts_fts
                 JOIN facts ON facts.id = facts_fts.rowid
@@ -168,7 +169,7 @@ def recall(brain: str, query: str, limit: int = 10) -> list[sqlite3.Row]:
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT id, brain, content, source, created_at, updated_at "
+                "SELECT id, brain, content, source, file_name, file_path, created_at, updated_at "
                 "FROM facts WHERE brain = ? ORDER BY updated_at DESC LIMIT ?",
                 (brain, limit),
             ).fetchall()
@@ -216,10 +217,20 @@ def list_facts(brain: str, limit: int = 50) -> list[sqlite3.Row]:
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT id, brain, content, source, created_at, updated_at "
+            "SELECT id, brain, content, source, file_name, file_path, created_at, updated_at "
             "FROM facts WHERE brain = ? ORDER BY updated_at DESC LIMIT ?",
             (brain, limit),
         ).fetchall()
         return rows
+    finally:
+        conn.close()
+
+
+def delete_brain(brain: str) -> int:
+    conn = _connect()
+    try:
+        cur = conn.execute("DELETE FROM facts WHERE brain = ?", (brain,))
+        conn.commit()
+        return cur.rowcount
     finally:
         conn.close()

@@ -93,33 +93,66 @@ Open `http://localhost:8787`. Each AI source gets its own cluster around a
 central hub, every fact is a node, click one to edit (`correct()`) or delete
 (`forget()`) it.
 
-**Full frontend** (`frontend/`) — a much more complete React app: pan/zoom
+**Full frontend** — a much more complete React app living in this same
+repo (`src/components/`, `src/services/`, alongside `src/brain/`): pan/zoom
 graph view, list view, global search, tags, a recent-activity log, an
-"Add fact" / "Ingest" flow, and an MCP-bridge panel that generates the exact
-Claude Desktop config for `brain.server`. This one started life as an
-AI Studio prototype that was explicitly built to replicate another
-product's look — it's been cleaned of that branding and copy, and its
-storage layer now talks to this same Python backend (`brain.web`'s API)
-instead of the browser's local storage, so this view and the MCP server see
-identical data. Tags and the recent-activity log are still a local-only
-convenience layer for now (not yet in the Python schema) — see "Where this
-goes next."
+"Add fact" / "Ingest" flow (now with its own client-side file extraction
+for PDF/XLSX — see `src/services/fileExtractor.ts`), and an MCP-bridge
+panel that generates the exact Claude Desktop config for `brain.server`.
+This one started life as an AI Studio prototype that was explicitly built
+to replicate another product's look — it's been cleaned of that branding
+and copy, and its storage layer (`src/services/brainStorage.ts`) talks to
+this same Python backend (`brain.web`'s API) instead of the browser's
+local storage, so this view, the simple viewer above, and the MCP server
+all see identical data. Tags and the recent-activity log are still a
+local-only convenience layer for now (not yet in the Python schema) — see
+"Where this goes next."
 
 To run it:
 
 ```bash
-# terminal 1 — the backend, serves the API this frontend talks to
+# terminal 1 — the backend, serves the API everything else talks to
 ./.venv/bin/python -m brain.web
 
-# terminal 2 — the frontend
-cd frontend
+# terminal 2 — the frontend (run from the repo root)
 npm install --legacy-peer-deps   # the pinned vite version needs this flag
 npm run dev
 ```
 
 Open the Vite dev server URL it prints (usually `http://localhost:3000`).
-If the backend runs on a different host/port, copy `frontend/.env.local.example`
-to `frontend/.env.local` and set `VITE_BRAIN_API_URL` accordingly.
+If the backend runs on a different host/port, copy `.env.local.example` to
+`.env.local` and set `VITE_BRAIN_API_URL` accordingly.
+
+## Bulk-importing your actual chat history
+
+Claude.ai and ChatGPT both let you export your entire account's conversation
+history in one shot — Claude: Settings → Privacy → Export data; ChatGPT:
+Settings → Data controls → Export data. Both email you a zip. Point this at
+it and it goes straight into the brain, no manual per-chat copying:
+
+```bash
+./.venv/bin/python -m brain.import_export --platform claude --zip export.zip --brain coding
+./.venv/bin/python -m brain.import_export --platform chatgpt --zip export.zip --brain coding
+```
+
+Each conversation becomes one fact, source tagged `claude`/`gpt`, and
+re-running it after a fresh export only adds what's new or changed — same
+dedup/merge behavior as the file ingest path. Built against each platform's
+current export shape (Claude: a flat list of conversations; ChatGPT: a
+branching tree of message nodes, since regenerated replies create
+branches — this follows the main branch only). These formats aren't
+guaranteed stable across platform updates; if a run errors out, it's most
+likely a changed field name, not a logic bug.
+
+## Capturing new chats as you go
+
+The bulk import above handles catching up on history. For every
+conversation *after* that, there's `extension/` — a browser extension with
+one button: save the chat you're currently looking at (Claude, ChatGPT, or
+Gemini) straight into the brain. No export, no file. See
+`extension/README.md` for loading it and — importantly — for the one part
+of it that's an unverified best guess (the per-site selectors that find
+each message on the page).
 
 ## Loading files in — chats, and now college material
 
@@ -168,43 +201,52 @@ just won't get picked up.
 
 ## Project layout
 
+This is one repo — Python backend and React frontend sit side by side
+under `src/`, not split into separate projects:
+
 ```
-brain/
-  src/brain/
-    db.py       # SQLite storage + full-text search
-    server.py   # MCP server — the 5 tools an AI can call
-    ingest.py   # bulk-load files (md/txt/pdf/docx/xlsx/pptx)
-    extract.py  # per-format text extraction used by ingest.py
-    web.py      # local viewer: serves the API + the page below
+src/
+  brain/              # Python backend
+    db.py             # SQLite storage, full-text search, file dedup/merge
+    server.py         # MCP server — the tools an AI can call
+    ingest.py         # bulk-load files (md/txt/pdf/docx/xlsx/pptx)
+    extract.py        # per-format text + OCR extraction used by ingest.py
+    import_export.py  # parse official Claude/ChatGPT export zips directly in
+    web.py             # local API + the simple built-in viewer below
     static/
-      index.html  # the brain visualization, wired to real data
-  frontend/     # the full React app (see "Viewing and correcting it")
-  data/
-    brain.db    # created on first run, gitignore this
-  requirements.txt
-  pyproject.toml
+      index.html      # the simple viewer, wired to real data
+  components/         # the full React app's UI
+  services/
+    brainStorage.ts   # talks to brain.web's API (not localStorage)
+    fileExtractor.ts  # client-side PDF/XLSX/etc. extraction for the Ingest modal
+    semanticChunker.ts
+extension/            # "Save to Brain" browser extension (see its own README)
+data/
+  brain.db            # created on first run, gitignore this
+requirements.txt       # Python deps
+pyproject.toml
+package.json            # frontend deps
 ```
 
 ## Where this goes next
 
 Roughly in order of what'd matter most:
 
-1. **Try it for real** — connect the MCP server to Claude, feed it a real
-   project's exported chats, see where `recall()` actually falls short
-   (probably: dumb chunking returns awkward fragments; worth an LLM pass to
-   extract cleaner facts before storing).
-2. **Live connectors** (GitHub first, probably — you already have an API
-   token flow in your head from other projects) using read-first/act-second.
-3. **Give tags and recent-activity a real backend home** — right now
-   `frontend/src/services/brainStorage.ts` keeps those local-only
-   (localStorage) since the Python schema has no columns for them yet. If
-   they turn out to matter day to day, add a `tags` column and an
-   `activity` table to `db.py` and move them over.
-4. **Real image understanding, not just OCR** — a vision model call per
+1. **Try it for real** — connect the MCP server to Claude, bulk-import a
+   real export, see where `recall()` actually falls short (probably: still
+   some awkward fragments on the file-ingest path even with semantic
+   sectioning; worth an LLM pass to extract cleaner facts before storing).
+2. **Fix the extension's selectors against the real, live sites** — see
+   `extension/README.md`. This is the one piece that couldn't be verified
+   end to end while building it.
+3. **More live connectors** (GitHub, Moodle, Drive) using
+   read-first/act-second, same pattern as the chat-export parsers.
+4. **Give tags and recent-activity a real backend home** — right now
+   `src/services/brainStorage.ts` keeps those local-only (localStorage)
+   since the Python schema has no columns for them yet. If they turn out
+   to matter day to day, add a `tags` column and an `activity` table to
+   `db.py` and move them over.
+5. **Real image understanding, not just OCR** — a vision model call per
    embedded image (what's actually in a chart, a photo, a diagram) would
    go beyond reading text-in-images, at the cost of an API call per image.
    Worth it once OCR's limits actually start showing up, not before.
-5. **Sort out `remember()`'s id handling** — the frontend does an
-   optimistic local id, then reconciles it with the backend's real id once
-   the POST resolves. Works, but a dedicated endpoint that returns the real
-   id synchronously (rather than reading it back) would be cleaner.

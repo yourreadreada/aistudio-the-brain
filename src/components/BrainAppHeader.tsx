@@ -2,12 +2,14 @@ import React, { useState } from 'react';
 import { AISource, Fact, SOURCE_PALETTE } from '../types/brain';
 import { BrainLogo } from './BrainLogo';
 import { GlobalSearchBar } from './GlobalSearchBar';
+import { GuidedService } from './GuidedConnectionModal';
 
 interface BrainAppHeaderProps {
   currentBrain: string;
   brains: string[];
   onSelectBrain: (brain: string) => void;
   onCreateBrain: (name: string) => void;
+  onDeleteBrain?: (brain: string) => void;
   searchQuery: string;
   onSearchChange: (q: string) => void;
   onSelectFactFromSearch: (fact: Fact, targetBrain?: string) => void;
@@ -16,6 +18,8 @@ interface BrainAppHeaderProps {
   onOpenAddFact: () => void;
   onOpenIngest: () => void;
   onOpenMcp: () => void;
+  onOpenGuidedConfig?: (service?: GuidedService) => void;
+  connectionStatus?: { chatgpt: boolean; claude: boolean; gemini: boolean; backend: boolean };
   onSwitchToLogin: () => void;
   onToggleRecentActivity: () => void;
   recentActivityCount?: number;
@@ -27,6 +31,7 @@ export const BrainAppHeader: React.FC<BrainAppHeaderProps> = ({
   brains,
   onSelectBrain,
   onCreateBrain,
+  onDeleteBrain,
   searchQuery,
   onSearchChange,
   onSelectFactFromSearch,
@@ -35,6 +40,8 @@ export const BrainAppHeader: React.FC<BrainAppHeaderProps> = ({
   onOpenAddFact,
   onOpenIngest,
   onOpenMcp,
+  onOpenGuidedConfig,
+  connectionStatus = { chatgpt: false, claude: false, gemini: false, backend: false },
   onSwitchToLogin,
   onToggleRecentActivity,
   recentActivityCount = 0,
@@ -51,13 +58,21 @@ export const BrainAppHeader: React.FC<BrainAppHeaderProps> = ({
     setIsCreatingBrain(false);
   };
 
+  const handleOpenConfigWizard = () => {
+    if (onOpenGuidedConfig) {
+      onOpenGuidedConfig('chatgpt');
+    } else {
+      onOpenMcp();
+    }
+  };
+
   return (
     <header className="relative z-20 flex flex-col border-b border-white/10 bg-[#03040a]/80 backdrop-blur-xl">
       {/* Top Row: Logo, Brain Switcher, Search, Actions */}
       <div className="flex h-14 w-full items-center justify-between pl-28 pr-4 sm:pl-32 md:pl-28 md:pr-6 gap-3">
-        {/* Brand & Brain Selector */}
-        <div className="flex items-center gap-3 shrink-0">
-          <div className="flex items-center gap-2.5 text-white">
+        {/* Brand & Brain Selector with Delete Option */}
+        <div className="flex items-center gap-2.5 shrink-0">
+          <div className="flex items-center gap-2 text-white">
             <BrainLogo size={18} className="text-white" />
             <span className="mono text-[13px] tracking-wider text-ink font-semibold">THE BRAIN</span>
           </div>
@@ -89,26 +104,43 @@ export const BrainAppHeader: React.FC<BrainAppHeaderProps> = ({
               </button>
             </form>
           ) : (
-            <select
-              value={currentBrain}
-              onChange={(e) => {
-                if (e.target.value === '__NEW__') {
-                  setIsCreatingBrain(true);
-                } else {
-                  onSelectBrain(e.target.value);
-                }
-              }}
-              className="mono cursor-pointer rounded-xl border border-white/36 bg-black/30 px-3 py-1.5 text-[12px] text-ink outline-none backdrop-blur-md transition hover:border-white/52 focus:border-white/52"
-            >
-              {brains.map((b) => (
-                <option key={b} value={b} className="bg-[#03040a] text-white">
-                  brain: {b}
+            <div className="flex items-center gap-1.5">
+              <select
+                value={currentBrain}
+                onChange={(e) => {
+                  if (e.target.value === '__NEW__') {
+                    setIsCreatingBrain(true);
+                  } else {
+                    onSelectBrain(e.target.value);
+                  }
+                }}
+                className="mono cursor-pointer rounded-xl border border-white/36 bg-black/30 px-3 py-1.5 text-[12px] text-ink outline-none backdrop-blur-md transition hover:border-white/52 focus:border-white/52"
+              >
+                {brains.map((b) => (
+                  <option key={b} value={b} className="bg-[#03040a] text-white">
+                    brain: {b}
+                  </option>
+                ))}
+                <option value="__NEW__" className="bg-[#03040a] text-ink-faint">
+                  + New Brain...
                 </option>
-              ))}
-              <option value="__NEW__" className="bg-[#03040a] text-ink-faint">
-                + New Brain...
-              </option>
-            </select>
+              </select>
+
+              {/* Delete Brain Option */}
+              {onDeleteBrain && (
+                <button
+                  type="button"
+                  onClick={() => onDeleteBrain(currentBrain)}
+                  className="mono p-1.5 rounded-xl border border-white/15 bg-black/30 text-white/40 hover:text-rose-400 hover:border-rose-500/40 hover:bg-rose-500/10 transition"
+                  title={`Delete brain "${currentBrain}" and its facts`}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                  </svg>
+                </button>
+              )}
+            </div>
           )}
         </div>
 
@@ -122,8 +154,32 @@ export const BrainAppHeader: React.FC<BrainAppHeaderProps> = ({
           />
         </div>
 
-        {/* Actions */}
+        {/* Actions & Real-Time Connection Indicator */}
         <div className="flex items-center gap-2 shrink-0">
+          {/* Real-time External AI Connections Status Strip */}
+          <button
+            type="button"
+            onClick={handleOpenConfigWizard}
+            className="mono hidden sm:flex items-center gap-2 rounded-xl border border-white/20 bg-black/40 px-3 py-1.5 text-[11px] text-white/70 hover:border-white/40 hover:bg-black/60 transition shrink-0"
+            title="External AI Chat Connections (Click to open Guided Setup Wizard)"
+          >
+            <span className="text-white/40 font-medium">AI Sync:</span>
+            <span className={`flex items-center gap-1 ${connectionStatus.chatgpt ? 'text-emerald-300 font-semibold' : 'text-white/40'}`}>
+              <span>GPT</span>
+              <span className="text-[10px]">{connectionStatus.chatgpt ? '✓' : '○'}</span>
+            </span>
+            <span className="text-white/20">·</span>
+            <span className={`flex items-center gap-1 ${connectionStatus.claude ? 'text-amber-300 font-semibold' : 'text-white/40'}`}>
+              <span>Claude</span>
+              <span className="text-[10px]">{connectionStatus.claude ? '✓' : '○'}</span>
+            </span>
+            <span className="text-white/20">·</span>
+            <span className={`flex items-center gap-1 ${connectionStatus.gemini ? 'text-sky-300 font-semibold' : 'text-white/40'}`}>
+              <span>Gemini</span>
+              <span className="text-[10px]">{connectionStatus.gemini ? '✓' : '○'}</span>
+            </span>
+          </button>
+
           {/* Recent Activity Toggle Button */}
           <button
             onClick={onToggleRecentActivity}
@@ -138,7 +194,7 @@ export const BrainAppHeader: React.FC<BrainAppHeaderProps> = ({
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400 opacity-75" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-400" />
             </span>
-            <span className="hidden sm:inline">Recent Activity</span>
+            <span className="hidden lg:inline">Recent Activity</span>
             {recentActivityCount > 0 && (
               <span className="mono rounded-full bg-white/15 px-1.5 py-0.2 text-[9.5px] text-white/80">
                 {recentActivityCount}
@@ -162,11 +218,11 @@ export const BrainAppHeader: React.FC<BrainAppHeaderProps> = ({
           </button>
 
           <button
-            onClick={onOpenMcp}
+            onClick={handleOpenConfigWizard}
             className="mono hidden rounded-xl border border-white/36 bg-black/30 px-3 py-1.5 text-[12px] text-ink-soft transition hover:border-white/52 hover:bg-black/45 md:block"
-            title="MCP Bridge config"
+            title="Connect ChatGPT, Claude & Gemini Web (100% Free)"
           >
-            MCP Bridge
+            Web AI & MCP
           </button>
 
           {/* Integrated View Switcher Segmented Control */}
@@ -221,7 +277,7 @@ export const BrainAppHeader: React.FC<BrainAppHeaderProps> = ({
         </div>
 
         <div className="mono hidden text-[10px] text-ink-ghost lg:block">
-          Local SQLite FTS5 · Click any constellation node to correct() or forget()
+          Local SQLite FTS5 · Two-Way Free Web AI Grounding
         </div>
       </div>
     </header>

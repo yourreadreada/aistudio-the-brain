@@ -7,6 +7,8 @@ import { FactPanel } from './FactPanel';
 import { AddFactModal } from './AddFactModal';
 import { IngestModal } from './IngestModal';
 import { McpBridgeModal } from './McpBridgeModal';
+import { GuidedConnectionModal, GuidedService } from './GuidedConnectionModal';
+import { DeleteBrainModal } from './DeleteBrainModal';
 import { RecentActivityPanel } from './RecentActivityPanel';
 
 interface BrainViewProps {
@@ -84,6 +86,15 @@ export const BrainView: React.FC<BrainViewProps> = ({ userEmail, initialBrainNam
   const [isAddFactOpen, setIsAddFactOpen] = useState(false);
   const [isIngestOpen, setIsIngestOpen] = useState(false);
   const [isMcpOpen, setIsMcpOpen] = useState(false);
+  const [isGuidedConfigOpen, setIsGuidedConfigOpen] = useState(false);
+  const [guidedService, setGuidedService] = useState<GuidedService>('chatgpt');
+  const [isDeleteBrainOpen, setIsDeleteBrainOpen] = useState(false);
+  const [brainToDelete, setBrainToDelete] = useState('');
+  const [connectionStatus, setConnectionStatus] = useState(brainStore.getConnectionStatus());
+
+  const refreshConnectionStatus = () => {
+    setConnectionStatus(brainStore.getConnectionStatus());
+  };
 
   // Load brains and facts
   const refreshData = () => {
@@ -94,6 +105,7 @@ export const BrainView: React.FC<BrainViewProps> = ({ userEmail, initialBrainNam
     }
     const currentFacts = brainStore.recall(currentBrain, searchQuery, activeSourceFilter);
     setFacts(currentFacts);
+    refreshConnectionStatus();
   };
 
   useEffect(() => {
@@ -113,6 +125,24 @@ export const BrainView: React.FC<BrainViewProps> = ({ userEmail, initialBrainNam
     brainStore.createBrain(name);
     setCurrentBrain(name);
     refreshData();
+  };
+
+  const handleOpenDeleteBrain = (brain: string) => {
+    setBrainToDelete(brain);
+    setIsDeleteBrainOpen(true);
+  };
+
+  const handleBrainDeleted = (deletedBrain: string) => {
+    const remaining = brainStore.getBrains().filter((b) => b !== deletedBrain);
+    const nextBrain = remaining.length > 0 ? remaining[0] : 'coding';
+    setCurrentBrain(nextBrain);
+    refreshData();
+    refreshActivities();
+  };
+
+  const handleOpenGuidedConfig = (service: GuidedService = 'chatgpt') => {
+    setGuidedService(service);
+    setIsGuidedConfigOpen(true);
   };
 
   const handleAddFact = (
@@ -209,7 +239,7 @@ export const BrainView: React.FC<BrainViewProps> = ({ userEmail, initialBrainNam
 
   const handleClearActivities = () => {
     try {
-      localStorage.removeItem('apex_brain_recent_activity_v1');
+      localStorage.removeItem('brain_recent_activity_v1');
     } catch {}
     setActivities([]);
   };
@@ -230,6 +260,7 @@ export const BrainView: React.FC<BrainViewProps> = ({ userEmail, initialBrainNam
         brains={brains}
         onSelectBrain={setCurrentBrain}
         onCreateBrain={handleCreateBrain}
+        onDeleteBrain={handleOpenDeleteBrain}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         onSelectFactFromSearch={handleSelectFactFromSearch}
@@ -237,7 +268,9 @@ export const BrainView: React.FC<BrainViewProps> = ({ userEmail, initialBrainNam
         onSelectSourceFilter={setActiveSourceFilter}
         onOpenAddFact={() => setIsAddFactOpen(true)}
         onOpenIngest={() => setIsIngestOpen(true)}
-        onOpenMcp={() => setIsMcpOpen(true)}
+        onOpenMcp={() => handleOpenGuidedConfig('chatgpt')}
+        onOpenGuidedConfig={handleOpenGuidedConfig}
+        connectionStatus={connectionStatus}
         onSwitchToLogin={onSwitchToLogin}
         onToggleRecentActivity={() => setIsRecentActivityOpen(!isRecentActivityOpen)}
         recentActivityCount={activities.length}
@@ -439,6 +472,21 @@ export const BrainView: React.FC<BrainViewProps> = ({ userEmail, initialBrainNam
         isOpen={isMcpOpen}
         onClose={() => setIsMcpOpen(false)}
         currentBrain={currentBrain}
+      />
+
+      <GuidedConnectionModal
+        isOpen={isGuidedConfigOpen}
+        onClose={() => setIsGuidedConfigOpen(false)}
+        currentBrain={currentBrain}
+        initialService={guidedService}
+        onConnectionStatusChange={refreshConnectionStatus}
+      />
+
+      <DeleteBrainModal
+        isOpen={isDeleteBrainOpen}
+        onClose={() => setIsDeleteBrainOpen(false)}
+        brainToDelete={brainToDelete}
+        onBrainDeleted={handleBrainDeleted}
       />
     </div>
   );
